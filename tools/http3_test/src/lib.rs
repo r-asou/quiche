@@ -43,7 +43,7 @@
 //! let mut url = url::Url::parse("https://cloudflare-quic.com/b/get").unwrap();
 //! let mut reqs = Vec::new();
 //!
-//! reqs.push(http3_test::Http3Req::new("GET", &url, None, None));
+//! reqs.push(http3_test::Http3Req::new(b"GET", &url, None, None));
 //! ```
 //!
 //! Assertions are used to check the received response headers and body
@@ -69,8 +69,8 @@
 //! let mut url = url::Url::parse("https://cloudflare-quic.com/b/get").unwrap();
 //! let mut reqs = Vec::new();
 //!
-//! let expect_hdrs = Some(vec![quiche::h3::Header::new(":status", "200")]);
-//! reqs.push(http3_test::Http3Req::new("GET", &url, None, expect_hdrs));
+//! let expect_hdrs = Some(vec![quiche::h3::Header::new(b":status", "200")]);
+//! reqs.push(http3_test::Http3Req::new(b"GET", &url, None, expect_hdrs));
 //! ```
 //!
 //! The [`assert_headers!`] macro can be used to validate the received headers,
@@ -89,8 +89,8 @@
 //! let mut url = url::Url::parse("https://cloudflare-quic.com/b/get").unwrap();
 //! let mut reqs = Vec::new();
 //!
-//! let expect_hdrs = Some(vec![quiche::h3::Header::new(":status", "200")]);
-//! reqs.push(http3_test::Http3Req::new("GET", &url, None, expect_hdrs));
+//! let expect_hdrs = Some(vec![quiche::h3::Header::new(b":status", "200")]);
+//! reqs.push(http3_test::Http3Req::new(b"GET", &url, None, expect_hdrs));
 //!
 //! // Using a closure...
 //! let assert =
@@ -113,8 +113,8 @@
 //! ```no_run
 //! # let mut url = url::Url::parse("https://cloudflare-quic.com/b/get").unwrap();
 //! # let mut reqs = Vec::new();
-//! # let expect_hdrs = Some(vec![quiche::h3::Header::new(":status", "200")]);
-//! # reqs.push(http3_test::Http3Req::new("GET", &url, None, expect_hdrs));
+//! # let expect_hdrs = Some(vec![quiche::h3::Header::new(b":status", "200")]);
+//! # reqs.push(http3_test::Http3Req::new(b"GET", &url, None, expect_hdrs));
 //! # // Using a closure...
 //! # let assert = |reqs: &[http3_test::Http3Req]| {
 //! #   http3_test::assert_headers!(reqs[0]);
@@ -144,8 +144,8 @@
 //! ```no_run
 //! # let mut url = url::Url::parse("https://cloudflare-quic.com/b/get").unwrap();
 //! # let mut reqs = Vec::new();
-//! # let expect_hdrs = Some(vec![quiche::h3::Header::new(":status", "200")]);
-//! # reqs.push(http3_test::Http3Req::new("GET", &url, None, expect_hdrs));
+//! # let expect_hdrs = Some(vec![quiche::h3::Header::new(b":status", "200")]);
+//! # reqs.push(http3_test::Http3Req::new(b"GET", &url, None, expect_hdrs));
 //! # // Using a closure...
 //! # let assert = |reqs: &[http3_test::Http3Req]| {
 //! #   http3_test::assert_headers!(reqs[0]);
@@ -184,8 +184,8 @@
 //! ```no_run
 //! # let mut url = url::Url::parse("https://cloudflare-quic.com/b/get").unwrap();
 //! # let mut reqs = Vec::new();
-//! # let expect_hdrs = Some(vec![quiche::h3::Header::new(":status", "200")]);
-//! # reqs.push(http3_test::Http3Req::new("GET", &url, None, expect_hdrs));
+//! # let expect_hdrs = Some(vec![quiche::h3::Header::new(b":status", "200")]);
+//! # reqs.push(http3_test::Http3Req::new(b"GET", &url, None, expect_hdrs));
 //! # // Using a closure...
 //! # let assert = |reqs: &[http3_test::Http3Req]| {
 //! #   http3_test::assert_headers!(reqs[0]);
@@ -231,7 +231,7 @@ use std::collections::HashMap;
 
 use quiche::h3::Header;
 
-pub const USER_AGENT: &str = "quiche-http3-integration-client";
+pub const USER_AGENT: &[u8] = b"quiche-http3-integration-client";
 
 /// Stores the request, the expected response headers, and the actual response.
 ///
@@ -241,7 +241,7 @@ pub const USER_AGENT: &str = "quiche-http3-integration-client";
 pub struct Http3Req {
     pub url: url::Url,
     pub hdrs: Vec<Header>,
-    body: Option<Vec<u8>>,
+    pub body: Option<Vec<u8>>,
     pub expect_resp_hdrs: Option<Vec<Header>>,
     pub resp_hdrs: Vec<Header>,
     pub resp_body: Vec<u8>,
@@ -259,15 +259,18 @@ impl Http3Req {
         }
 
         let mut hdrs = vec![
-            Header::new(":method", method),
-            Header::new(":scheme", url.scheme()),
-            Header::new(":authority", url.host_str().unwrap()),
-            Header::new(":path", &path),
-            Header::new("user-agent", USER_AGENT),
+            Header::new(b":method", method.as_bytes()),
+            Header::new(b":scheme", url.scheme().as_bytes()),
+            Header::new(b":authority", url.host_str().unwrap().as_bytes()),
+            Header::new(b":path", path.as_bytes()),
+            Header::new(b"user-agent", USER_AGENT),
         ];
 
         if let Some(body) = &body {
-            hdrs.push(Header::new("content-length", &body.len().to_string()));
+            hdrs.push(Header::new(
+                b"content-length",
+                body.len().to_string().as_bytes(),
+            ));
         }
 
         Http3Req {
@@ -297,11 +300,10 @@ macro_rules! assert_headers {
         if let Some(expect_hdrs) = &$req.expect_resp_hdrs {
             for hdr in expect_hdrs {
                 match $req.resp_hdrs.iter().find(|&x| x.name() == hdr.name()) {
-                    Some(h) => { assert_eq!(hdr.value(), h.value());},
+                    Some(h) => assert_eq!(hdr.value(), h.value()),
 
-                    None => {
-                        panic!(format!("assertion failed: expected response header field {} not present!", hdr.name()));
-                    }
+                    None =>
+                        panic!("assertion failed: expected response header field {} not present!", std::str::from_utf8(hdr.name()).unwrap()),
                 }
             }
         }
@@ -314,7 +316,7 @@ macro_rules! assert_headers {
                     Some(h) => { assert_eq!(hdr.value(), h.value(), $($arg)+);},
 
                     None => {
-                        panic!(format!("assertion failed: expected response header field {} not present! {}", hdr.name(), $($arg)+));
+                        panic!("assertion failed: expected response header field {} not present! {}", hdr.name(), $($arg)+);
                     }
                 }
             }
@@ -327,6 +329,19 @@ macro_rules! assert_headers {
 /// Each test assertion can check the set of Http3Req
 /// however they like.
 pub type Http3Assert = fn(&[Http3Req]);
+
+#[derive(Debug, PartialEq)]
+pub enum Http3TestError {
+    HandshakeFail,
+    HttpFail,
+    Other(String),
+}
+
+pub struct ArbitraryStreamData {
+    pub stream_id: u64,
+    pub data: Vec<u8>,
+    pub fin: bool,
+}
 
 /// The main object for getting things done.
 ///
@@ -341,6 +356,7 @@ pub type Http3Assert = fn(&[Http3Req]);
 pub struct Http3Test {
     endpoint: url::Url,
     reqs: Vec<Http3Req>,
+    stream_data: Option<Vec<ArbitraryStreamData>>,
     assert: Http3Assert,
     issued_reqs: HashMap<u64, usize>,
     concurrent: bool,
@@ -355,6 +371,23 @@ impl Http3Test {
         Http3Test {
             endpoint,
             reqs,
+            stream_data: None,
+            assert,
+            issued_reqs: HashMap::new(),
+            concurrent,
+            current_idx: 0,
+        }
+    }
+
+    pub fn with_stream_data(
+        endpoint: url::Url, reqs: Vec<Http3Req>,
+        stream_data: Vec<ArbitraryStreamData>, assert: Http3Assert,
+        concurrent: bool,
+    ) -> Http3Test {
+        Http3Test {
+            endpoint,
+            reqs,
+            stream_data: Some(stream_data),
             assert,
             issued_reqs: HashMap::new(),
             concurrent,
@@ -377,6 +410,22 @@ impl Http3Test {
         &mut self, conn: &mut quiche::Connection,
         h3_conn: &mut quiche::h3::Connection,
     ) -> quiche::h3::Result<()> {
+        if let Some(stream_data) = &self.stream_data {
+            for d in stream_data {
+                match conn.stream_send(d.stream_id, &d.data, d.fin) {
+                    Ok(_) => (),
+
+                    Err(e) => {
+                        error!(
+                            "failed to send data on stream {}: {:?}",
+                            d.stream_id, e
+                        );
+                        return Err(From::from(e));
+                    },
+                }
+            }
+        }
+
         if self.reqs.len() - self.current_idx == 0 {
             return Err(quiche::h3::Error::Done);
         }

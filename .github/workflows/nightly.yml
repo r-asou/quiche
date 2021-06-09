@@ -4,7 +4,7 @@ name: Nightly
 
 env:
   RUSTFLAGS: "-D warnings"
-  TOOLCHAIN: "nightly-2020-10-25"
+  TOOLCHAIN: "nightly"
 
 jobs:
   quiche:
@@ -26,6 +26,12 @@ jobs:
           components: rustfmt
           override: true
 
+      - name: Run cargo fmt
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: -- --check
+
       - name: Install dependencies
         run: sudo apt-get install libev-dev uthash-dev
 
@@ -33,19 +39,13 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --verbose --features qlog
+          args: --tests --examples --verbose --features qlog
 
       - name: Run cargo package
         uses: actions-rs/cargo@v1
         with:
           command: package
           args: --verbose --allow-dirty
-
-      - name: Run cargo fmt
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: -- --check
 
       - name: Run cargo doc
         uses: actions-rs/cargo@v1

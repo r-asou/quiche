@@ -41,6 +41,9 @@ const SETTINGS_MAX_HEADER_LIST_SIZE: u64 = 0x6;
 const SETTINGS_QPACK_BLOCKED_STREAMS: u64 = 0x7;
 const SETTINGS_H3_DATAGRAM: u64 = 0x276;
 
+// Permit between 16 maximally-encoded and 128 minimally-encoded SETTINGS.
+const MAX_SETTINGS_PAYLOAD_SIZE: usize = 256;
+
 #[derive(Clone, PartialEq)]
 pub enum Frame {
     Data {
@@ -301,6 +304,11 @@ fn parse_settings_frame(
     let mut qpack_blocked_streams = None;
     let mut h3_datagram = None;
 
+    // Reject SETTINGS frames that are too long.
+    if settings_length > MAX_SETTINGS_PAYLOAD_SIZE {
+        return Err(super::Error::ExcessiveLoad);
+    }
+
     while b.off() < settings_length {
         let setting_ty = b.get_varint()?;
         let settings_val = b.get_varint()?;
@@ -325,6 +333,10 @@ fn parse_settings_frame(
 
                 h3_datagram = Some(settings_val);
             },
+
+            // Reserved values overlap with HTTP/2 and MUST be rejected
+            0x0 | 0x2 | 0x3 | 0x4 | 0x5 =>
+                return Err(super::Error::SettingsError),
 
             // Unknown Settings parameters must be ignored.
             _ => (),
@@ -643,6 +655,99 @@ mod tests {
             )
             .unwrap(),
             frame
+        );
+    }
+
+    #[test]
+    fn settings_h2_prohibited() {
+        // We need to test the prohibited values (0x0 | 0x2 | 0x3 | 0x4 | 0x5)
+        // but the quiche API doesn't support that, so use a manually created
+        // frame data buffer where d[frame_header_len] is the SETTING type field.
+        let frame_payload_len = 2u64;
+        let frame_header_len = 2;
+        let mut d = [
+            SETTINGS_FRAME_TYPE_ID as u8,
+            frame_payload_len as u8,
+            0x0,
+            1,
+        ];
+
+        assert_eq!(
+            Frame::from_bytes(
+                SETTINGS_FRAME_TYPE_ID,
+                frame_payload_len,
+                &d[frame_header_len..]
+            ),
+            Err(crate::h3::Error::SettingsError)
+        );
+
+        d[frame_header_len] = 0x2;
+
+        assert_eq!(
+            Frame::from_bytes(
+                SETTINGS_FRAME_TYPE_ID,
+                frame_payload_len,
+                &d[frame_header_len..]
+            ),
+            Err(crate::h3::Error::SettingsError)
+        );
+
+        d[frame_header_len] = 0x3;
+
+        assert_eq!(
+            Frame::from_bytes(
+                SETTINGS_FRAME_TYPE_ID,
+                frame_payload_len,
+                &d[frame_header_len..]
+            ),
+            Err(crate::h3::Error::SettingsError)
+        );
+
+        d[frame_header_len] = 0x4;
+
+        assert_eq!(
+            Frame::from_bytes(
+                SETTINGS_FRAME_TYPE_ID,
+                frame_payload_len,
+                &d[frame_header_len..]
+            ),
+            Err(crate::h3::Error::SettingsError)
+        );
+
+        d[frame_header_len] = 0x5;
+
+        assert_eq!(
+            Frame::from_bytes(
+                SETTINGS_FRAME_TYPE_ID,
+                frame_payload_len,
+                &d[frame_header_len..]
+            ),
+            Err(crate::h3::Error::SettingsError)
+        );
+    }
+
+    #[test]
+    fn settings_too_big() {
+        // We need to test a SETTINGS frame that exceeds
+        // MAX_SETTINGS_PAYLOAD_SIZE, so just craft a special buffer that look
+        // likes the frame. The payload content doesn't matter since quiche
+        // should abort before then.
+        let frame_payload_len = MAX_SETTINGS_PAYLOAD_SIZE + 1;
+        let frame_header_len = 2;
+        let d = [
+            SETTINGS_FRAME_TYPE_ID as u8,
+            frame_payload_len as u8,
+            0x1,
+            1,
+        ];
+
+        assert_eq!(
+            Frame::from_bytes(
+                SETTINGS_FRAME_TYPE_ID,
+                frame_payload_len as u64,
+                &d[frame_header_len..]
+            ),
+            Err(crate::h3::Error::ExcessiveLoad)
         );
     }
 

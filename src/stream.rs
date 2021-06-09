@@ -27,7 +27,6 @@
 use std::cmp;
 
 use std::sync::Arc;
-use std::sync::RwLock;
 
 use std::collections::hash_map;
 
@@ -128,6 +127,11 @@ pub struct StreamMap {
     /// of the map elements is a tuple of the error code and final size values
     /// to include in the RESET_STREAM frame.
     reset: HashMap<u64, (u64, u64)>,
+
+    /// Set of stream IDs corresponding to streams that are shutdown on the
+    /// receive side, and need to send a STOP_SENDING frame. The value of the
+    /// map elements is the error code to include in the STOP_SENDING frame.
+    stopped: HashMap<u64, u64>,
 }
 
 impl StreamMap {
@@ -177,7 +181,7 @@ impl StreamMap {
                 }
 
                 if local != is_local(id, is_server) {
-                    return Err(Error::InvalidStreamState);
+                    return Err(Error::InvalidStreamState(id));
                 }
 
                 let (max_rx_data, max_tx_data) = match (local, is_bidi(id)) {
@@ -384,6 +388,20 @@ impl StreamMap {
         }
     }
 
+    /// Adds or removes the stream ID to/from the stopped streams set with the
+    /// given error code.
+    ///
+    /// If the stream was already in the list, this does nothing.
+    pub fn mark_stopped(
+        &mut self, stream_id: u64, stopped: bool, error_code: u64,
+    ) {
+        if stopped {
+            self.stopped.insert(stream_id, error_code);
+        } else {
+            self.stopped.remove(&stream_id);
+        }
+    }
+
     /// Updates the peer's maximum bidirectional stream count limit.
     pub fn update_peer_max_streams_bidi(&mut self, v: u64) {
         self.peer_max_streams_bidi = cmp::max(self.peer_max_streams_bidi, v);
@@ -412,6 +430,18 @@ impl StreamMap {
     /// Returns the new max_streams_uni limit.
     pub fn max_streams_uni_next(&mut self) -> u64 {
         self.local_max_streams_uni_next
+    }
+
+    /// Returns the number of bidirectional streams that can be created
+    /// before the peer's stream count limit is reached.
+    pub fn peer_streams_left_bidi(&self) -> u64 {
+        self.peer_max_streams_bidi - self.local_opened_streams_bidi
+    }
+
+    /// Returns the number of unidirectional streams that can be created
+    /// before the peer's stream count limit is reached.
+    pub fn peer_streams_left_uni(&self) -> u64 {
+        self.peer_max_streams_uni - self.local_opened_streams_uni
     }
 
     /// Drops completed stream.
@@ -460,6 +490,11 @@ impl StreamMap {
         self.reset.iter()
     }
 
+    /// Creates an iterator over streams that need to send STOP_SENDING.
+    pub fn stopped(&self) -> hash_map::Iter<u64, u64> {
+        self.stopped.iter()
+    }
+
     /// Returns true if there are any streams that have data to write.
     pub fn has_flushable(&self) -> bool {
         !self.flushable.is_empty()
@@ -484,6 +519,11 @@ impl StreamMap {
     /// Returns true if there are any streams that are reset.
     pub fn has_reset(&self) -> bool {
         !self.reset.is_empty()
+    }
+
+    /// Returns true if there are any streams that need to send STOP_SENDING.
+    pub fn has_stopped(&self) -> bool {
+        !self.stopped.is_empty()
     }
 
     /// Returns true if the max bidirectional streams count needs to be updated
@@ -662,6 +702,9 @@ pub struct RecvBuf {
     /// The final stream offset received from the peer, if any.
     fin_off: Option<u64>,
 
+    /// The error code received via RESET_STREAM.
+    error: Option<u64>,
+
     /// Whether incoming data is validated but not buffered.
     drain: bool,
 }
@@ -737,10 +780,6 @@ impl RecvBuf {
             }
         }
 
-        if self.drain {
-            return Ok(());
-        }
-
         let mut tmp_buf = Some(buf);
 
         while let Some(mut buf) = tmp_buf {
@@ -774,7 +813,9 @@ impl RecvBuf {
 
             self.len = cmp::max(self.len, buf.max_off());
 
-            self.data.push(buf);
+            if !self.drain {
+                self.data.push(buf);
+            }
         }
 
         Ok(())
@@ -797,6 +838,11 @@ impl RecvBuf {
             return Err(Error::Done);
         }
 
+        // The stream was reset, so return the error code instead.
+        if let Some(e) = self.error {
+            return Err(Error::StreamReset(e));
+        }
+
         while cap > 0 && self.ready() {
             let mut buf = match self.data.peek_mut() {
                 Some(v) => v,
@@ -806,7 +852,7 @@ impl RecvBuf {
 
             let buf_len = cmp::min(buf.len(), cap);
 
-            buf.with(|s| out[len..len + buf_len].copy_from_slice(&s[..buf_len]));
+            out[len..len + buf_len].copy_from_slice(&buf[..buf_len]);
 
             self.off += buf_len as u64;
 
@@ -829,7 +875,7 @@ impl RecvBuf {
     }
 
     /// Resets the stream at the given offset.
-    pub fn reset(&mut self, final_size: u64) -> Result<usize> {
+    pub fn reset(&mut self, error_code: u64, final_size: u64) -> Result<usize> {
         // Stream's size is already known, forbid changing it.
         if let Some(fin_off) = self.fin_off {
             if fin_off != final_size {
@@ -842,11 +888,27 @@ impl RecvBuf {
             return Err(Error::FinalSize);
         }
 
-        self.fin_off = Some(final_size);
-
-        // Return how many bytes need to be removed from the connection flow
+        // Calculate how many bytes need to be removed from the connection flow
         // control.
-        Ok((final_size - self.len) as usize)
+        let max_data_delta = final_size - self.len;
+
+        if self.error.is_some() {
+            return Ok(max_data_delta as usize);
+        }
+
+        self.error = Some(error_code);
+
+        // Clear all data already buffered.
+        self.off = final_size;
+
+        self.data.clear();
+
+        // In order to ensure the application is notified when the stream is
+        // reset, enqueue a zero-length buffer at the final size offset.
+        let buf = RangeBuf::from(b"", final_size, true);
+        self.write(buf)?;
+
+        Ok(max_data_delta as usize)
     }
 
     /// Commits the new max_data limit.
@@ -868,6 +930,8 @@ impl RecvBuf {
         self.drain = true;
 
         self.data.clear();
+
+        self.off = self.max_off();
 
         Ok(())
     }
@@ -972,12 +1036,6 @@ impl SendBuf {
     pub fn write(&mut self, mut data: &[u8], mut fin: bool) -> Result<usize> {
         let max_off = self.off + data.len() as u64;
 
-        if self.shutdown {
-            // Since we won't write any more data anyway, pretend that we sent
-            // all data that was passed in.
-            return Ok(data.len());
-        }
-
         // Get the stream send capacity. This will return an error if the stream
         // was stopped.
         let capacity = self.cap()?;
@@ -1020,28 +1078,6 @@ impl SendBuf {
 
         let mut len = 0;
 
-        // Try to fill the last buffer in the queue first, if it has capacity.
-        if let Some(back) = self.data.back_mut() {
-            let spare = back.spare_capacity();
-
-            if spare > 0 {
-                len = cmp::min(spare, data.len());
-
-                back.extend_from_slice(&data[..len])?;
-
-                back.fin = len == data.len() && fin;
-
-                self.off += len as u64;
-                self.len += len as u64;
-
-                data = &data[len..];
-
-                if !back.is_empty() {
-                    self.pos = cmp::min(self.pos, self.data.len() - 1);
-                }
-            }
-        }
-
         // Split the remaining input data into consistently-sized buffers to
         // avoid fragmentation.
         for chunk in data.chunks(SEND_BUFFER_SIZE) {
@@ -1049,12 +1085,7 @@ impl SendBuf {
 
             let fin = len == data.len() && fin;
 
-            let buf = RangeBuf::from_with_capacity(
-                chunk,
-                self.off,
-                fin,
-                SEND_BUFFER_SIZE,
-            )?;
+            let buf = RangeBuf::from(chunk, self.off, fin);
 
             // The new data can simply be appended at the end of the send buffer.
             self.data.push_back(buf);
@@ -1093,10 +1124,8 @@ impl SendBuf {
 
             // Copy data to the output buffer.
             let out_pos = (next_off - out_off) as usize;
-            buf.with(|s| {
-                (&mut out[out_pos..out_pos + buf_len])
-                    .copy_from_slice(&s[..buf_len])
-            });
+            (&mut out[out_pos..out_pos + buf_len])
+                .copy_from_slice(&buf[..buf_len]);
 
             self.len -= buf_len as u64;
 
@@ -1236,6 +1265,9 @@ impl SendBuf {
         // Drop all buffered data.
         self.data.clear();
 
+        // Mark all data as acked.
+        self.ack(0, self.off as usize);
+
         self.pos = 0;
         self.len = 0;
 
@@ -1258,16 +1290,14 @@ impl SendBuf {
     }
 
     /// Shuts down sending data.
-    pub fn shutdown(&mut self) -> Result<()> {
+    pub fn shutdown(&mut self) -> Result<u64> {
         if self.shutdown {
             return Err(Error::Done);
         }
 
         self.shutdown = true;
 
-        self.data.clear();
-
-        Ok(())
+        self.reset()
     }
 
     /// Returns the largest offset of data buffered.
@@ -1323,6 +1353,11 @@ impl SendBuf {
         false
     }
 
+    /// Returns true if the stream was stopped before completion.
+    pub fn is_stopped(&self) -> bool {
+        self.error.is_some()
+    }
+
     /// Returns true if there is data to be written.
     fn ready(&self) -> bool {
         !self.data.is_empty() && self.off_front() < self.off
@@ -1364,19 +1399,14 @@ impl SendBuf {
 ///
 /// Finally, `off` is the starting offset for the specific `RangeBuf` within the
 /// stream the buffer belongs to.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq)]
 pub struct RangeBuf {
     /// The internal buffer holding the data.
     ///
     /// To avoid neeless allocations when a RangeBuf is split, this field is
     /// reference-counted and can be shared between multiple RangeBuf objects,
     /// and sliced using the `start` and `len` values.
-    ///
-    /// In order to allow the inner `Vec` to be mutated, an `RwLock` is used to
-    /// achieve interior mutability (`RefCell` can't be used here because it
-    /// does not implement `Sync`, which is required by `Arc` to make the type
-    /// `Send`-able).
-    data: Arc<RwLock<Vec<u8>>>,
+    data: Arc<Vec<u8>>,
 
     /// The initial offset within the internal buffer.
     start: usize,
@@ -1398,38 +1428,13 @@ impl RangeBuf {
     /// Creates a new `RangeBuf` from the given slice.
     pub fn from(buf: &[u8], off: u64, fin: bool) -> RangeBuf {
         RangeBuf {
-            data: Arc::new(RwLock::new(Vec::from(buf))),
+            data: Arc::new(Vec::from(buf)),
             start: 0,
             pos: 0,
             len: buf.len(),
             off,
             fin,
         }
-    }
-
-    /// Creates a new `RangeBuf` from the given slice and capacity.
-    ///
-    /// `cap` bytes are allocated for the underlying data store, regardless of
-    /// the size of the input data. When the data is smaller than the capacity,
-    /// the remaining space can be filled by calling `extend_from_slice()`.
-    pub fn from_with_capacity(
-        buf: &[u8], off: u64, fin: bool, cap: usize,
-    ) -> Result<RangeBuf> {
-        if cap < buf.len() {
-            return Err(Error::BufferTooShort);
-        }
-
-        let mut vec = Vec::with_capacity(SEND_BUFFER_SIZE);
-        vec.extend_from_slice(buf);
-
-        Ok(RangeBuf {
-            data: Arc::new(RwLock::new(vec)),
-            start: 0,
-            pos: 0,
-            len: buf.len(),
-            off,
-            fin,
-        })
     }
 
     /// Returns whether `self` holds the final offset in the stream.
@@ -1452,12 +1457,6 @@ impl RangeBuf {
         self.len - (self.pos - self.start)
     }
 
-    /// Returns the amount of bytes that can be written to the internal buffer.
-    pub fn spare_capacity(&self) -> usize {
-        let r = self.data.read().unwrap();
-        r.capacity() - r.len()
-    }
-
     /// Returns true if `self` has a length of zero bytes.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -1466,29 +1465,6 @@ impl RangeBuf {
     /// Consumes the starting `count` bytes of `self`.
     pub fn consume(&mut self, count: usize) {
         self.pos += count;
-    }
-
-    /// Applies the given function to the internal buffer.
-    pub fn with<F, T>(&self, f: F) -> T
-    where
-        F: FnOnce(&[u8]) -> T,
-    {
-        let r = self.data.read().unwrap();
-        f(&r[self.pos..self.start + self.len])
-    }
-
-    /// Extends the internal buffer with the given slice.
-    pub fn extend_from_slice(&mut self, other: &[u8]) -> Result<()> {
-        if self.spare_capacity() < other.len() {
-            return Err(Error::BufferTooShort);
-        }
-
-        let mut w = self.data.write().unwrap();
-        w.extend_from_slice(other);
-
-        self.len += other.len();
-
-        Ok(())
     }
 
     /// Splits the buffer into two at the given index.
@@ -1517,6 +1493,14 @@ impl RangeBuf {
     }
 }
 
+impl std::ops::Deref for RangeBuf {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.data[self.pos..self.start + self.len]
+    }
+}
+
 impl Ord for RangeBuf {
     fn cmp(&self, other: &RangeBuf) -> cmp::Ordering {
         // Invert ordering to implement min-heap.
@@ -1535,9 +1519,6 @@ impl PartialEq for RangeBuf {
         self.off == other.off
     }
 }
-
-// Implement Eq explicitly because RwLock prevents it from being derived.
-impl Eq for RangeBuf {}
 
 #[cfg(test)]
 mod tests {
@@ -2411,7 +2392,7 @@ mod tests {
         let first = RangeBuf::from(b"hello", 0, true);
 
         assert_eq!(stream.recv.write(first), Ok(()));
-        assert_eq!(stream.recv.reset(10), Err(Error::FinalSize));
+        assert_eq!(stream.recv.reset(0, 10), Err(Error::FinalSize));
     }
 
     #[test]
@@ -2422,8 +2403,8 @@ mod tests {
         let first = RangeBuf::from(b"hello", 0, false);
 
         assert_eq!(stream.recv.write(first), Ok(()));
-        assert_eq!(stream.recv.reset(5), Ok(0));
-        assert_eq!(stream.recv.reset(5), Ok(0));
+        assert_eq!(stream.recv.reset(0, 5), Ok(0));
+        assert_eq!(stream.recv.reset(0, 5), Ok(0));
     }
 
     #[test]
@@ -2434,8 +2415,8 @@ mod tests {
         let first = RangeBuf::from(b"hello", 0, false);
 
         assert_eq!(stream.recv.write(first), Ok(()));
-        assert_eq!(stream.recv.reset(5), Ok(0));
-        assert_eq!(stream.recv.reset(10), Err(Error::FinalSize));
+        assert_eq!(stream.recv.reset(0, 5), Ok(0));
+        assert_eq!(stream.recv.reset(0, 10), Err(Error::FinalSize));
     }
 
     #[test]
@@ -2446,7 +2427,7 @@ mod tests {
         let first = RangeBuf::from(b"hello", 0, false);
 
         assert_eq!(stream.recv.write(first), Ok(()));
-        assert_eq!(stream.recv.reset(4), Err(Error::FinalSize));
+        assert_eq!(stream.recv.reset(0, 4), Err(Error::FinalSize));
     }
 
     #[test]
@@ -2967,7 +2948,7 @@ mod tests {
         assert_eq!(buf.off(), 5);
         assert_eq!(buf.fin(), true);
 
-        buf.with(|s| assert_eq!(s, b"helloworld"));
+        assert_eq!(&buf[..], b"helloworld");
 
         // Advance buffer.
         buf.consume(5);
@@ -2982,7 +2963,7 @@ mod tests {
         assert_eq!(buf.off(), 10);
         assert_eq!(buf.fin(), true);
 
-        buf.with(|s| assert_eq!(s, b"world"));
+        assert_eq!(&buf[..], b"world");
 
         // Split buffer before position.
         let mut new_buf = buf.split_off(3);
@@ -2997,7 +2978,7 @@ mod tests {
         assert_eq!(buf.off(), 8);
         assert_eq!(buf.fin(), false);
 
-        buf.with(|s| assert_eq!(s, b""));
+        assert_eq!(&buf[..], b"");
 
         assert_eq!(new_buf.start, 3);
         assert_eq!(new_buf.pos, 5);
@@ -3009,7 +2990,7 @@ mod tests {
         assert_eq!(new_buf.off(), 10);
         assert_eq!(new_buf.fin(), true);
 
-        new_buf.with(|s| assert_eq!(s, b"world"));
+        assert_eq!(&new_buf[..], b"world");
 
         // Advance buffer.
         new_buf.consume(2);
@@ -3024,7 +3005,7 @@ mod tests {
         assert_eq!(new_buf.off(), 12);
         assert_eq!(new_buf.fin(), true);
 
-        new_buf.with(|s| assert_eq!(s, b"rld"));
+        assert_eq!(&new_buf[..], b"rld");
 
         // Split buffer after position.
         let mut new_new_buf = new_buf.split_off(5);
@@ -3039,7 +3020,7 @@ mod tests {
         assert_eq!(new_buf.off(), 12);
         assert_eq!(new_buf.fin(), false);
 
-        new_buf.with(|s| assert_eq!(s, b"r"));
+        assert_eq!(&new_buf[..], b"r");
 
         assert_eq!(new_new_buf.start, 8);
         assert_eq!(new_new_buf.pos, 8);
@@ -3051,7 +3032,7 @@ mod tests {
         assert_eq!(new_new_buf.off(), 13);
         assert_eq!(new_new_buf.fin(), true);
 
-        new_new_buf.with(|s| assert_eq!(s, b"ld"));
+        assert_eq!(&new_new_buf[..], b"ld");
 
         // Advance buffer.
         new_new_buf.consume(2);
@@ -3066,6 +3047,6 @@ mod tests {
         assert_eq!(new_new_buf.off(), 15);
         assert_eq!(new_new_buf.fin(), true);
 
-        new_new_buf.with(|s| assert_eq!(s, b""));
+        assert_eq!(&new_new_buf[..], b"");
     }
 }

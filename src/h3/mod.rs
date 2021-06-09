@@ -59,8 +59,9 @@
 //!
 //! ```no_run
 //! # let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
-//! # let scid = [0xba; 16];
-//! # let mut conn = quiche::connect(None, &scid, &mut config).unwrap();
+//! # let scid = quiche::ConnectionId::from_ref(&[0xba; 16]);
+//! # let from = "127.0.0.1:1234".parse().unwrap();
+//! # let mut conn = quiche::accept(&scid, None, from, &mut config).unwrap();
 //! # let h3_config = quiche::h3::Config::new()?;
 //! let h3_conn = quiche::h3::Connection::with_transport(&mut conn, &h3_config)?;
 //! # Ok::<(), quiche::h3::Error>(())
@@ -74,16 +75,17 @@
 //!
 //! ```no_run
 //! # let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
-//! # let scid = [0xba; 16];
-//! # let mut conn = quiche::connect(None, &scid, &mut config).unwrap();
+//! # let scid = quiche::ConnectionId::from_ref(&[0xba; 16]);
+//! # let to = "127.0.0.1:1234".parse().unwrap();
+//! # let mut conn = quiche::connect(None, &scid, to, &mut config).unwrap();
 //! # let h3_config = quiche::h3::Config::new()?;
 //! # let mut h3_conn = quiche::h3::Connection::with_transport(&mut conn, &h3_config)?;
 //! let req = vec![
-//!     quiche::h3::Header::new(":method", "GET"),
-//!     quiche::h3::Header::new(":scheme", "https"),
-//!     quiche::h3::Header::new(":authority", "quic.tech"),
-//!     quiche::h3::Header::new(":path", "/"),
-//!     quiche::h3::Header::new("user-agent", "quiche"),
+//!     quiche::h3::Header::new(b":method", b"GET"),
+//!     quiche::h3::Header::new(b":scheme", b"https"),
+//!     quiche::h3::Header::new(b":authority", b"quic.tech"),
+//!     quiche::h3::Header::new(b":path", b"/"),
+//!     quiche::h3::Header::new(b"user-agent", b"quiche"),
 //! ];
 //!
 //! h3_conn.send_request(&mut conn, &req, true)?;
@@ -95,16 +97,17 @@
 //!
 //! ```no_run
 //! # let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
-//! # let scid = [0xba; 16];
-//! # let mut conn = quiche::connect(None, &scid, &mut config).unwrap();
+//! # let scid = quiche::ConnectionId::from_ref(&[0xba; 16]);
+//! # let to = "127.0.0.1:1234".parse().unwrap();
+//! # let mut conn = quiche::connect(None, &scid, to, &mut config).unwrap();
 //! # let h3_config = quiche::h3::Config::new()?;
 //! # let mut h3_conn = quiche::h3::Connection::with_transport(&mut conn, &h3_config)?;
 //! let req = vec![
-//!     quiche::h3::Header::new(":method", "GET"),
-//!     quiche::h3::Header::new(":scheme", "https"),
-//!     quiche::h3::Header::new(":authority", "quic.tech"),
-//!     quiche::h3::Header::new(":path", "/"),
-//!     quiche::h3::Header::new("user-agent", "quiche"),
+//!     quiche::h3::Header::new(b":method", b"GET"),
+//!     quiche::h3::Header::new(b":scheme", b"https"),
+//!     quiche::h3::Header::new(b":authority", b"quic.tech"),
+//!     quiche::h3::Header::new(b":path", b"/"),
+//!     quiche::h3::Header::new(b"user-agent", b"quiche"),
 //! ];
 //!
 //! let stream_id = h3_conn.send_request(&mut conn, &req, false)?;
@@ -125,8 +128,9 @@
 //! use quiche::h3::NameValue;
 //!
 //! # let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
-//! # let scid = [0xba; 16];
-//! # let mut conn = quiche::accept(&scid, None, &mut config).unwrap();
+//! # let scid = quiche::ConnectionId::from_ref(&[0xba; 16]);
+//! # let from = "127.0.0.1:1234".parse().unwrap();
+//! # let mut conn = quiche::accept(&scid, None, from, &mut config).unwrap();
 //! # let h3_config = quiche::h3::Config::new()?;
 //! # let mut h3_conn = quiche::h3::Connection::with_transport(&mut conn, &h3_config)?;
 //! loop {
@@ -135,15 +139,15 @@
 //!             let mut headers = list.into_iter();
 //!
 //!             // Look for the request's method.
-//!             let method = headers.find(|h| h.name() == ":method").unwrap();
+//!             let method = headers.find(|h| h.name() == b":method").unwrap();
 //!
 //!             // Look for the request's path.
-//!             let path = headers.find(|h| h.name() == ":path").unwrap();
+//!             let path = headers.find(|h| h.name() == b":path").unwrap();
 //!
-//!             if method.value() == "GET" && path.value() == "/" {
+//!             if method.value() == b"GET" && path.value() == b"/" {
 //!                 let resp = vec![
-//!                     quiche::h3::Header::new(":status", &200.to_string()),
-//!                     quiche::h3::Header::new("server", "quiche"),
+//!                     quiche::h3::Header::new(b":status", 200.to_string().as_bytes()),
+//!                     quiche::h3::Header::new(b"server", b"quiche"),
 //!                 ];
 //!
 //!                 h3_conn.send_response(&mut conn, stream_id, &resp, false)?;
@@ -158,6 +162,10 @@
 //!
 //!         Ok((stream_id, quiche::h3::Event::Finished)) => {
 //!             // Peer terminated stream, handle it.
+//!         },
+//!
+//!         Ok((stream_id, quiche::h3::Event::Reset(err))) => {
+//!             // Peer reset the stream, handle it.
 //!         },
 //!
 //!         Ok((_flow_id, quiche::h3::Event::Datagram)) => (),
@@ -186,22 +194,25 @@
 //! use quiche::h3::NameValue;
 //!
 //! # let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
-//! # let scid = [0xba; 16];
-//! # let mut conn = quiche::connect(None, &scid, &mut config).unwrap();
+//! # let scid = quiche::ConnectionId::from_ref(&[0xba; 16]);
+//! # let to = "127.0.0.1:1234".parse().unwrap();
+//! # let mut conn = quiche::connect(None, &scid, to, &mut config).unwrap();
 //! # let h3_config = quiche::h3::Config::new()?;
 //! # let mut h3_conn = quiche::h3::Connection::with_transport(&mut conn, &h3_config)?;
 //! loop {
 //!     match h3_conn.poll(&mut conn) {
 //!         Ok((stream_id, quiche::h3::Event::Headers{list, has_body})) => {
-//!             let status = list.iter().find(|h| h.name() == ":status").unwrap();
+//!             let status = list.iter().find(|h| h.name() == b":status").unwrap();
 //!             println!("Received {} response on stream {}",
-//!                      status.value(), stream_id);
+//!                      std::str::from_utf8(status.value()).unwrap(),
+//!                      stream_id);
 //!         },
 //!
 //!         Ok((stream_id, quiche::h3::Event::Data)) => {
 //!             let mut body = vec![0; 4096];
 //!
-//!             if let Ok(read) =
+//!             // Consume all body data received on the stream.
+//!             while let Ok(read) =
 //!                 h3_conn.recv_body(&mut conn, stream_id, &mut body)
 //!             {
 //!                 println!("Received {} bytes of payload on stream {}",
@@ -211,6 +222,10 @@
 //!
 //!         Ok((stream_id, quiche::h3::Event::Finished)) => {
 //!             // Peer terminated stream, handle it.
+//!         },
+//!
+//!         Ok((stream_id, quiche::h3::Event::Reset(err))) => {
+//!             // Peer reset the stream, handle it.
 //!         },
 //!
 //!         Ok((_flow_id, quiche::h3::Event::Datagram)) => (),
@@ -274,7 +289,7 @@ use crate::octets;
 ///
 /// [`Config::set_application_protos()`]:
 /// ../struct.Config.html#method.set_application_protos
-pub const APPLICATION_PROTOCOL: &[u8] = b"\x05h3-29\x05h3-28\x05h3-27";
+pub const APPLICATION_PROTOCOL: &[u8] = b"\x02h3\x05h3-29\x05h3-28\x05h3-27";
 
 // The offset used when converting HTTP/3 urgency to quiche urgency.
 const PRIORITY_URGENCY_OFFSET: u8 = 124;
@@ -385,6 +400,7 @@ impl Error {
         }
     }
 
+    #[cfg(feature = "ffi")]
     fn to_c(self) -> libc::ssize_t {
         match self {
             Error::Done => -1,
@@ -444,8 +460,6 @@ pub struct Config {
     max_header_list_size: Option<u64>,
     qpack_max_table_capacity: Option<u64>,
     qpack_blocked_streams: Option<u64>,
-    dgram_poll_threshold: u64,
-    stream_poll_threshold: u64,
 }
 
 impl Config {
@@ -455,14 +469,18 @@ impl Config {
             max_header_list_size: None,
             qpack_max_table_capacity: None,
             qpack_blocked_streams: None,
-            dgram_poll_threshold: std::u64::MAX,
-            stream_poll_threshold: std::u64::MAX,
         })
     }
 
     /// Sets the `SETTINGS_MAX_HEADER_LIST_SIZE` setting.
     ///
-    /// By default no limit is enforced.
+    /// By default no limit is enforced. When a request whose headers exceed
+    /// the limit set by the application is received, the call to the [`poll()`]
+    /// method will return the [`Error::ExcessiveLoad`] error, and the
+    /// connection will be closed.
+    ///
+    /// [`poll()`]: struct.Connection.html#method.poll
+    /// [`Error::ExcessiveLoad`]: enum.Error.html#variant.ExcessiveLoad
     pub fn set_max_header_list_size(&mut self, v: u64) {
         self.max_header_list_size = Some(v);
     }
@@ -480,97 +498,57 @@ impl Config {
     pub fn set_qpack_blocked_streams(&mut self, v: u64) {
         self.qpack_blocked_streams = Some(v);
     }
-
-    /// Sets the [`poll()`] repetition threshold for DATAGRAM events.
-    ///
-    /// When there is at least one pending DATAGRAM, [`poll()`] can return an
-    /// [`Event::Datagram`] and the application should use [`recv_dgram()`] to
-    /// remove it from the pending queue. If all DATAGRAMs are not removed,
-    /// repeat [`poll()`] calls can continue to return events. By default there
-    /// is no threshold to the number of times this can happen.
-    ///
-    /// This parameter adds a threshold for the number of times a DATAGRAM event
-    /// will be returned by [`poll()`]. Once reached, stream events will be
-    /// returned.
-    ///
-    /// [`poll()`]: struct.Connection.html#method.poll
-    /// [`recv_dgram()`]: struct.Connection.html#method.recv_dgram
-    /// [`Event::Datagram`]: enum.Event.html#variant.Datagram
-    pub fn set_dgram_poll_threshold(&mut self, v: u64) {
-        self.dgram_poll_threshold = v;
-    }
-
-    /// Sets the [`poll()`] repetition threshold for stream events.
-    ///
-    /// When there is at least one readable stream, [`poll()`] can return an
-    /// [`Event::Headers`], [`Event::Data`] or [`Event::Finished`]. While the
-    /// stream remains readable repeat [`poll()`] calls can continue to return
-    /// stream events. By default there is no threshold to the number of times
-    /// this can happen.
-    ///
-    /// This parameter adds a threshold for the number of times a stream event
-    /// of any type will be returned by [`poll()`]. Once reached, datagram
-    /// events will be returned.
-    ///
-    /// [`poll()`]: struct.Connection.html#method.poll
-    /// [`recv_body)`]: struct.Connection.html#method.body
-    /// [`Event::Headers`]: enum.Event.html#variant.Headers
-    /// [`Event::Data`]: enum.Event.html#variant.Data
-    /// [`Event::Finished`]: enum.Event.html#variant.Finished
-    pub fn set_stream_poll_threshold(&mut self, v: u64) {
-        self.stream_poll_threshold = v;
-    }
 }
 
 /// A trait for types with associated string name and value.
 pub trait NameValue {
     /// Returns the object's name.
-    fn name(&self) -> &str;
+    fn name(&self) -> &[u8];
 
     /// Returns the object's value.
-    fn value(&self) -> &str;
+    fn value(&self) -> &[u8];
 }
 
 /// An owned name-value pair representing a raw HTTP header.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Header(String, String);
+pub struct Header(Vec<u8>, Vec<u8>);
 
 impl Header {
     /// Creates a new header.
     ///
     /// Both `name` and `value` will be cloned.
-    pub fn new(name: &str, value: &str) -> Self {
-        Self(String::from(name), String::from(value))
+    pub fn new(name: &[u8], value: &[u8]) -> Self {
+        Self(name.to_vec(), value.to_vec())
     }
 }
 
 impl NameValue for Header {
-    fn name(&self) -> &str {
+    fn name(&self) -> &[u8] {
         &self.0
     }
 
-    fn value(&self) -> &str {
+    fn value(&self) -> &[u8] {
         &self.1
     }
 }
 
 /// A non-owned name-value pair representing a raw HTTP header.
 #[derive(Clone, Debug, PartialEq)]
-pub struct HeaderRef<'a>(&'a str, &'a str);
+pub struct HeaderRef<'a>(&'a [u8], &'a [u8]);
 
 impl<'a> HeaderRef<'a> {
     /// Creates a new header.
-    pub fn new(name: &'a str, value: &'a str) -> Self {
+    pub fn new(name: &'a [u8], value: &'a [u8]) -> Self {
         Self(name, value)
     }
 }
 
 impl<'a> NameValue for HeaderRef<'a> {
-    fn name(&self) -> &str {
+    fn name(&self) -> &[u8] {
         self.0
     }
 
-    fn value(&self) -> &str {
+    fn value(&self) -> &[u8] {
         self.1
     }
 }
@@ -593,26 +571,33 @@ pub enum Event {
     /// This indicates that the application can use the [`recv_body()`] method
     /// to retrieve the data from the stream.
     ///
-    /// This event will keep being reported until all the available data is
-    /// retrieved by the application or the event [threshold] is reached.
+    /// Note that [`recv_body()`] will need to be called repeatedly until the
+    /// [`Done`] value is returned, as the event will not be re-armed until all
+    /// buffered data is read.
     ///
     /// [`recv_body()`]: struct.Connection.html#method.recv_body
-    /// [threshold]: struct.Config.html#method.set_stream_poll_threshold
+    /// [`Done`]: enum.Error.html#variant.Done
     Data,
 
     /// Stream was closed,
     Finished,
+
+    /// Stream was reset.
+    ///
+    /// The associated data represents the error code sent by the peer.
+    Reset(u64),
 
     /// DATAGRAM was received.
     ///
     /// This indicates that the application can use the [`recv_dgram()`] method
     /// to retrieve the HTTP/3 DATAGRAM.
     ///
-    /// This event will keep being reported until all the available data is
-    /// retrieved by the application or the event [threshold] is reached.
+    /// Note that [`recv_dgram()`] will need to be called repeatedly until the
+    /// [`Done`] value is returned, as the event will not be re-armed until all
+    /// buffered DATAGRAMs with the same flow ID are read.
     ///
     /// [`recv_dgram()`]: struct.Connection.html#method.recv_dgram
-    /// [threshold]: struct.Config.html#method.set_dgram_poll_threshold
+    /// [`Done`]: enum.Error.html#variant.Done
     Datagram,
 
     /// GOAWAY was received.
@@ -649,6 +634,7 @@ pub struct Connection {
     qpack_encoder: qpack::Encoder,
     qpack_decoder: qpack::Decoder,
 
+    #[allow(dead_code)]
     local_qpack_streams: QpackStreams,
     peer_qpack_streams: QpackStreams,
 
@@ -661,13 +647,11 @@ pub struct Connection {
     local_goaway_id: Option<u64>,
     peer_goaway_id: Option<u64>,
 
-    dgram_event_count: u64,
-    dgram_poll_threshold: u64,
-    stream_event_count: u64,
-    stream_poll_threshold: u64,
+    dgram_event_triggered: bool,
 }
 
 impl Connection {
+    #[allow(clippy::unnecessary_wraps)]
     fn new(
         config: &Config, is_server: bool, enable_dgram: bool,
     ) -> Result<Connection> {
@@ -722,10 +706,7 @@ impl Connection {
             local_goaway_id: None,
             peer_goaway_id: None,
 
-            dgram_event_count: 0,
-            dgram_poll_threshold: config.dgram_poll_threshold,
-            stream_event_count: 0,
-            stream_poll_threshold: config.stream_poll_threshold,
+            dgram_event_triggered: false,
         })
     }
 
@@ -733,13 +714,27 @@ impl Connection {
     ///
     /// This will also initiate the HTTP/3 handshake with the peer by opening
     /// all control streams (including QPACK) and sending the local settings.
+    ///
+    /// On success the new connection is returned.
+    ///
+    /// The [`StreamLimit`] error is returned when the HTTP/3 control stream
+    /// cannot be created.
+    ///
+    /// [`StreamLimit`]: ../enum.Error.html#variant.InvalidState
     pub fn with_transport(
         conn: &mut super::Connection, config: &Config,
     ) -> Result<Connection> {
         let mut http3_conn =
             Connection::new(config, conn.is_server, conn.dgram_enabled())?;
 
-        http3_conn.send_settings(conn)?;
+        match http3_conn.send_settings(conn) {
+            Ok(_) => (),
+
+            Err(e) => {
+                conn.close(true, e.to_wire(), b"Error opening control stream")?;
+                return Err(e);
+            },
+        };
 
         // Try opening QPACK streams, but ignore errors if it fails since we
         // don't need them right now.
@@ -868,11 +863,14 @@ impl Connection {
                 // TODO: this also detects when u is not an sh-integer and
                 // clamps it in the same way. A real structured header parser
                 // would actually fail to parse.
-                let mut u =
-                    i64::from_str_radix(param.rsplit('=').next().unwrap(), 10)
-                        .unwrap_or(7);
+                let mut u = param
+                    .rsplit('=')
+                    .next()
+                    .unwrap()
+                    .parse::<i64>()
+                    .unwrap_or(7);
 
-                if u < 0 || u > 7 {
+                if !(0..=7).contains(&u) {
                     u = 7;
                 }
 
@@ -1004,6 +1002,11 @@ impl Connection {
             },
         };
 
+        // Avoid sending 0-length DATA frames when the fin flag is false.
+        if body.is_empty() && !fin {
+            return Err(Error::Done);
+        }
+
         let overhead = octets::varint_len(frame::DATA_FRAME_TYPE_ID) +
             octets::varint_len(body.len() as u64);
 
@@ -1019,10 +1022,8 @@ impl Connection {
             },
         };
 
-        // Make sure there is enough capacity to send the frame header and at
-        // least one byte of frame payload (this to avoid sending 0-length DATA
-        // frames).
-        if stream_cap <= overhead {
+        // Make sure there is enough capacity to send the DATA frame header.
+        if stream_cap < overhead {
             return Err(Error::Done);
         }
 
@@ -1032,6 +1033,11 @@ impl Connection {
         // If we can't send the entire body, set the fin flag to false so the
         // application can try again later.
         let fin = if body_len != body.len() { false } else { fin };
+
+        // Again, avoid sending 0-length DATA frames when the fin flag is false.
+        if body_len == 0 && !fin {
+            return Err(Error::Done);
+        }
 
         trace!(
             "{} tx frm DATA stream={} len={} fin={}",
@@ -1130,12 +1136,22 @@ impl Connection {
 
         match conn.dgram_recv_peek(&mut d, 8) {
             Ok(_) => {
-                let mut b = octets::Octets::with_slice(&d);
-                let flow_id = b.get_varint()?;
-                Ok((flow_id, Event::Datagram))
+                if self.dgram_event_triggered {
+                    return Err(Error::Done);
+                }
+
+                self.dgram_event_triggered = true;
+
+                Ok((0, Event::Datagram))
             },
 
-            Err(crate::Error::Done) => Err(Error::Done),
+            Err(crate::Error::Done) => {
+                // The dgram recv queue is empty, so re-arm the Datagram event
+                // so it is issued next time a DATAGRAM is received.
+                self.dgram_event_triggered = false;
+
+                Err(Error::Done)
+            },
 
             Err(e) => Err(Error::TransportError(e)),
         }
@@ -1155,32 +1171,78 @@ impl Connection {
     pub fn recv_body(
         &mut self, conn: &mut super::Connection, stream_id: u64, out: &mut [u8],
     ) -> Result<usize> {
-        let stream = self.streams.get_mut(&stream_id).ok_or(Error::Done)?;
+        let mut total = 0;
 
-        if stream.state() != stream::State::Data {
-            return Err(Error::Done);
+        // Try to consume all buffered data for the stream, even across multiple
+        // DATA frames.
+        while total < out.len() {
+            let stream = self.streams.get_mut(&stream_id).ok_or(Error::Done)?;
+
+            if stream.state() != stream::State::Data {
+                break;
+            }
+
+            let (read, fin) =
+                match stream.try_consume_data(conn, &mut out[total..]) {
+                    Ok(v) => v,
+
+                    Err(Error::Done) => break,
+
+                    Err(e) => return Err(e),
+                };
+
+            total += read;
+
+            // No more data to read, we are done.
+            if read == 0 || fin {
+                break;
+            }
+
+            // Process incoming data from the stream. For example, if a whole
+            // DATA frame was consumed, and another one is queued behind it,
+            // this will ensure the additional data will also be returned to
+            // the application.
+            match self.process_readable_stream(conn, stream_id, false) {
+                Ok(_) => unreachable!(),
+
+                Err(Error::Done) => (),
+
+                Err(e) => return Err(e),
+            };
+
+            if conn.stream_finished(stream_id) {
+                break;
+            }
         }
-
-        let read = stream.try_consume_data(conn, out)?;
 
         // While body is being received, the stream is marked as finished only
         // when all data is read by the application.
         if conn.stream_finished(stream_id) {
-            self.finished_streams.push_back(stream_id);
+            self.process_finished_stream(stream_id);
         }
 
-        Ok(read)
+        if total == 0 {
+            return Err(Error::Done);
+        }
+
+        Ok(total)
     }
 
     /// Processes HTTP/3 data received from the peer.
     ///
-    /// On success it returns an [`Event`] and an ID.
+    /// On success it returns an [`Event`] and an ID, or [`Done`] when there are
+    /// no events to report.
+    ///
+    /// Note that all events are edge-triggered, meaning that once reported they
+    /// will not be reported again by calling this method again, until the event
+    /// is re-armed.
     ///
     /// The events [`Headers`], [`Data`] and [`Finished`] return a stream ID,
     /// which is used in methods [`recv_body()`], [`send_response()`] or
     /// [`send_body()`].
     ///
-    /// The event [`Datagram`] returns a flow ID.
+    /// The event [`Datagram`] returns a dummy value of `0`, this should be
+    /// ignored by the application.
     ///
     /// The event [`GoAway`] returns an ID that depends on the connection role.
     /// A client receives the largest processed stream ID. A server receives the
@@ -1190,6 +1252,7 @@ impl Connection {
     /// the appropriate error code, using the transport's [`close()`] method.
     ///
     /// [`Event`]: enum.Event.html
+    /// [`Done`]: enum.Error.html#variant.Done
     /// [`Headers`]: enum.Event.html#variant.Headers
     /// [`Data`]: enum.Event.html#variant.Data
     /// [`Finished`]: enum.Event.html#variant.Finished
@@ -1204,7 +1267,7 @@ impl Connection {
         // When connection close is initiated by the local application (e.g. due
         // to a protocol error), the connection itself might be in a broken
         // state, so return early.
-        if conn.error.is_some() || conn.app_error.is_some() {
+        if conn.local_error.is_some() {
             return Err(Error::Done);
         }
 
@@ -1244,55 +1307,39 @@ impl Connection {
             return Ok((finished, Event::Finished));
         }
 
-        // Both stream and DATAGRAM event limits have been reached,
-        // so reset and start again.
-        if self.dgram_event_count == self.dgram_poll_threshold &&
-            self.stream_event_count == self.stream_poll_threshold
-        {
-            self.dgram_event_count = 0;
-            self.stream_event_count = 0;
-        }
-
         // Process queued DATAGRAMs if the poll threshold allows it.
-        if self.dgram_event_count < self.dgram_poll_threshold &&
-            conn.dgram_recv_front_len().is_some()
-        {
-            match self.process_dgrams(conn) {
-                Ok(v) => {
-                    self.dgram_event_count += 1;
-                    return Ok(v);
-                },
+        match self.process_dgrams(conn) {
+            Ok(v) => return Ok(v),
 
-                Err(Error::Done) => (),
+            Err(Error::Done) => (),
 
-                Err(e) => return Err(e),
-            };
-        }
+            Err(e) => return Err(e),
+        };
 
         // Process HTTP/3 data from readable streams.
         for s in conn.readable() {
-            if self.stream_event_count < self.stream_poll_threshold ||
-                conn.dgram_recv_front_len().is_none()
-            {
-                trace!("{} stream id {} is readable", conn.trace_id(), s);
+            trace!("{} stream id {} is readable", conn.trace_id(), s);
 
-                let ev = match self.process_readable_stream(conn, s) {
-                    Ok(v) => Some(v),
+            let ev = match self.process_readable_stream(conn, s, true) {
+                Ok(v) => Some(v),
 
-                    Err(Error::Done) => None,
+                Err(Error::Done) => None,
 
-                    Err(e) => return Err(e),
-                };
+                // Return early if the stream was reset, to avoid returning
+                // a Finished event later as well.
+                Err(Error::TransportError(crate::Error::StreamReset(e))) =>
+                    return Ok((s, Event::Reset(e))),
 
-                if conn.stream_finished(s) {
-                    self.finished_streams.push_back(s);
-                }
+                Err(e) => return Err(e),
+            };
 
-                // TODO: check if stream is completed so it can be freed
-                if let Some(ev) = ev {
-                    self.stream_event_count += 1;
-                    return Ok(ev);
-                }
+            if conn.stream_finished(s) {
+                self.process_finished_stream(s);
+            }
+
+            // TODO: check if stream is completed so it can be freed
+            if let Some(ev) = ev {
+                return Ok(ev);
             }
         }
 
@@ -1301,20 +1348,6 @@ impl Connection {
         // flag set.
         if let Some(finished) = self.finished_streams.pop_front() {
             return Ok((finished, Event::Finished));
-        }
-
-        // No event generated at this point, so try dgram again.
-        if conn.dgram_recv_front_len().is_some() {
-            match self.process_dgrams(conn) {
-                Ok(v) => {
-                    self.dgram_event_count += 1;
-                    return Ok(v);
-                },
-
-                Err(Error::Done) => (),
-
-                Err(e) => return Err(e),
-            };
         }
 
         Err(Error::Done)
@@ -1334,9 +1367,13 @@ impl Connection {
     pub fn send_goaway(
         &mut self, conn: &mut super::Connection, id: u64,
     ) -> Result<()> {
+        let mut id = id;
+
+        // TODO: server push
+        //
+        // In the meantime always send 0 from client.
         if !self.is_server {
-            // TODO: server push
-            return Ok(());
+            id = 0;
         }
 
         if self.is_server && id % 4 != 0 {
@@ -1556,7 +1593,7 @@ impl Connection {
             return Err(Error::ClosedCriticalStream);
         }
 
-        match self.process_readable_stream(conn, stream_id) {
+        match self.process_readable_stream(conn, stream_id, true) {
             Ok(ev) => return Ok(ev),
 
             Err(Error::Done) => (),
@@ -1578,7 +1615,7 @@ impl Connection {
     }
 
     fn process_readable_stream(
-        &mut self, conn: &mut super::Connection, stream_id: u64,
+        &mut self, conn: &mut super::Connection, stream_id: u64, polling: bool,
     ) -> Result<(u64, Event)> {
         self.streams
             .entry(stream_id)
@@ -1751,6 +1788,11 @@ impl Connection {
                 },
 
                 stream::State::FramePayload => {
+                    // Do not emit events when not polling.
+                    if !polling {
+                        break;
+                    }
+
                     stream.try_fill_buffer(conn)?;
 
                     let frame = match stream.try_consume_frame() {
@@ -1779,6 +1821,15 @@ impl Connection {
                 },
 
                 stream::State::Data => {
+                    // Do not emit events when not polling.
+                    if !polling {
+                        break;
+                    }
+
+                    if !stream.try_trigger_data_event() {
+                        break;
+                    }
+
                     return Ok((stream_id, Event::Data));
                 },
 
@@ -1793,14 +1844,42 @@ impl Connection {
 
                 stream::State::Drain => {
                     // Discard incoming data on the stream.
-                    conn.stream_shutdown(stream_id, crate::Shutdown::Read, 0)?;
+                    conn.stream_shutdown(
+                        stream_id,
+                        crate::Shutdown::Read,
+                        0x100,
+                    )?;
 
                     break;
                 },
+
+                stream::State::Finished => break,
             }
         }
 
         Err(Error::Done)
+    }
+
+    fn process_finished_stream(&mut self, stream_id: u64) {
+        let stream = match self.streams.get_mut(&stream_id) {
+            Some(v) => v,
+
+            None => return,
+        };
+
+        if stream.state() == stream::State::Finished {
+            return;
+        }
+
+        match stream.ty() {
+            Some(stream::Type::Request) | Some(stream::Type::Push) => {
+                stream.finished();
+
+                self.finished_streams.push_back(stream_id);
+            },
+
+            _ => (),
+        };
     }
 
     fn process_frame(
@@ -1861,14 +1940,25 @@ impl Connection {
                     .max_header_list_size
                     .unwrap_or(std::u64::MAX);
 
-                let headers = self
+                let headers = match self
                     .qpack_decoder
                     .decode(&header_block[..], max_size)
-                    .map_err(|e| match e {
-                        qpack::Error::HeaderListTooLarge => Error::ExcessiveLoad,
+                {
+                    Ok(v) => v,
 
-                        _ => Error::QpackDecompressionFailed,
-                    })?;
+                    Err(e) => {
+                        let e = match e {
+                            qpack::Error::HeaderListTooLarge =>
+                                Error::ExcessiveLoad,
+
+                            _ => Error::QpackDecompressionFailed,
+                        };
+
+                        conn.close(true, e.to_wire(), b"Error parsing headers.")?;
+
+                        return Err(e);
+                    },
+                };
 
                 let has_body = !conn.stream_finished(stream_id);
 
@@ -2039,8 +2129,6 @@ pub mod testing {
         pub pipe: testing::Pipe,
         pub client: Connection,
         pub server: Connection,
-
-        buf: [u8; 65535],
     }
 
     impl Session {
@@ -2072,43 +2160,42 @@ pub mod testing {
                 pipe,
                 client: Connection::new(&h3_config, false, client_dgram)?,
                 server: Connection::new(&h3_config, true, server_dgram)?,
-                buf: [0; 65535],
             })
         }
 
         /// Do the HTTP/3 handshake so both ends are in sane initial state.
         pub fn handshake(&mut self) -> Result<()> {
-            self.pipe.handshake(&mut self.buf)?;
+            self.pipe.handshake()?;
 
             // Client streams.
             self.client.send_settings(&mut self.pipe.client)?;
-            self.pipe.advance(&mut self.buf).ok();
+            self.pipe.advance().ok();
 
             self.client
                 .open_qpack_encoder_stream(&mut self.pipe.client)?;
-            self.pipe.advance(&mut self.buf).ok();
+            self.pipe.advance().ok();
 
             self.client
                 .open_qpack_decoder_stream(&mut self.pipe.client)?;
-            self.pipe.advance(&mut self.buf).ok();
+            self.pipe.advance().ok();
 
             if self.pipe.client.grease {
                 self.client.open_grease_stream(&mut self.pipe.client)?;
             }
 
-            self.pipe.advance(&mut self.buf).ok();
+            self.pipe.advance().ok();
 
             // Server streams.
             self.server.send_settings(&mut self.pipe.server)?;
-            self.pipe.advance(&mut self.buf).ok();
+            self.pipe.advance().ok();
 
             self.server
                 .open_qpack_encoder_stream(&mut self.pipe.server)?;
-            self.pipe.advance(&mut self.buf).ok();
+            self.pipe.advance().ok();
 
             self.server
                 .open_qpack_decoder_stream(&mut self.pipe.server)?;
-            self.pipe.advance(&mut self.buf).ok();
+            self.pipe.advance().ok();
 
             if self.pipe.server.grease {
                 self.server.open_grease_stream(&mut self.pipe.server)?;
@@ -2129,7 +2216,7 @@ pub mod testing {
 
         /// Advances the session pipe over the buffer.
         pub fn advance(&mut self) -> crate::Result<()> {
-            self.pipe.advance(&mut self.buf)
+            self.pipe.advance()
         }
 
         /// Polls the client for events.
@@ -2147,11 +2234,11 @@ pub mod testing {
         /// On success it returns the newly allocated stream and the headers.
         pub fn send_request(&mut self, fin: bool) -> Result<(u64, Vec<Header>)> {
             let req = vec![
-                Header::new(":method", "GET"),
-                Header::new(":scheme", "https"),
-                Header::new(":authority", "quic.tech"),
-                Header::new(":path", "/test"),
-                Header::new("user-agent", "quiche-test"),
+                Header::new(b":method", b"GET"),
+                Header::new(b":scheme", b"https"),
+                Header::new(b":authority", b"quic.tech"),
+                Header::new(b":path", b"/test"),
+                Header::new(b"user-agent", b"quiche-test"),
             ];
 
             let stream =
@@ -2169,8 +2256,8 @@ pub mod testing {
             &mut self, stream: u64, fin: bool,
         ) -> Result<Vec<Header>> {
             let resp = vec![
-                Header::new(":status", "200"),
-                Header::new("server", "quiche-test"),
+                Header::new(b":status", b"200"),
+                Header::new(b"server", b"quiche-test"),
             ];
 
             self.server.send_response(
@@ -2283,7 +2370,7 @@ pub mod testing {
         pub fn send_dgram_server(&mut self, flow_id: u64) -> Result<Vec<u8>> {
             let bytes = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
-            self.client
+            self.server
                 .send_dgram(&mut self.pipe.server, flow_id, &bytes)?;
 
             self.advance().ok();
@@ -2298,7 +2385,7 @@ pub mod testing {
         pub fn recv_dgram_server(
             &mut self, buf: &mut [u8],
         ) -> Result<(usize, u64, usize)> {
-            self.client.recv_dgram(&mut self.pipe.server, buf)
+            self.server.recv_dgram(&mut self.pipe.server, buf)
         }
 
         /// Sends a single HTTP/3 frame from the server.
@@ -2313,6 +2400,28 @@ pub mod testing {
 
             let off = b.off();
             self.pipe.server.stream_send(stream_id, &d[..off], fin)?;
+
+            self.advance().ok();
+
+            Ok(())
+        }
+
+        /// Sends an arbitrary buffer of HTTP/3 stream data from the client.
+        pub fn send_arbitrary_stream_data_client(
+            &mut self, data: &[u8], stream_id: u64, fin: bool,
+        ) -> Result<()> {
+            self.pipe.client.stream_send(stream_id, data, fin)?;
+
+            self.advance().ok();
+
+            Ok(())
+        }
+
+        /// Sends an arbitrary buffer of HTTP/3 stream data from the server.
+        pub fn send_arbitrary_stream_data_server(
+            &mut self, data: &[u8], stream_id: u64, fin: bool,
+        ) -> Result<()> {
+            self.pipe.server.stream_send(stream_id, data, fin)?;
 
             self.advance().ok();
 
@@ -2435,9 +2544,10 @@ mod tests {
         };
 
         assert_eq!(s.poll_client(), Ok((stream, ev_headers)));
+        assert_eq!(s.poll_client(), Ok((stream, Event::Data)));
+        assert_eq!(s.poll_client(), Err(Error::Done));
 
         for _ in 0..total_data_frames {
-            assert_eq!(s.poll_client(), Ok((stream, Event::Data)));
             assert_eq!(s.recv_body_client(stream, &mut recv_buf), Ok(body.len()));
         }
 
@@ -2504,9 +2614,10 @@ mod tests {
         };
 
         assert_eq!(s.poll_server(), Ok((stream, ev_headers)));
+        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
 
         for _ in 0..total_data_frames {
-            assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
             assert_eq!(s.recv_body_server(stream, &mut recv_buf), Ok(body.len()));
         }
 
@@ -2565,7 +2676,8 @@ mod tests {
             assert_eq!(ev, ev_headers);
             assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
             assert_eq!(s.recv_body_server(stream, &mut recv_buf), Ok(body.len()));
-            assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+            assert_eq!(s.poll_client(), Err(Error::Done));
+
             assert_eq!(s.recv_body_server(stream, &mut recv_buf), Ok(body.len()));
             assert_eq!(s.poll_server(), Ok((stream, Event::Finished)));
         }
@@ -2937,12 +3049,12 @@ mod tests {
         let mut s = Session::default().unwrap();
         s.handshake().unwrap();
 
-        s.client.send_goaway(&mut s.pipe.client, 1).unwrap();
+        s.client.send_goaway(&mut s.pipe.client, 100).unwrap();
 
         s.advance().ok();
 
         // TODO: server push
-        assert_eq!(s.poll_server(), Err(Error::Done));
+        assert_eq!(s.poll_server(), Ok((0, Event::GoAway)));
     }
 
     #[test]
@@ -3159,10 +3271,32 @@ mod tests {
     #[test]
     /// Tests limits for the stream state buffer maximum size.
     fn max_state_buf_size() {
-        // DATA frames don't consume the state buffer, so can be of any size.
         let mut s = Session::default().unwrap();
         s.handshake().unwrap();
 
+        let req = vec![
+            Header::new(b":method", b"GET"),
+            Header::new(b":scheme", b"https"),
+            Header::new(b":authority", b"quic.tech"),
+            Header::new(b":path", b"/test"),
+            Header::new(b"user-agent", b"quiche-test"),
+        ];
+
+        assert_eq!(
+            s.client.send_request(&mut s.pipe.client, &req, false),
+            Ok(0)
+        );
+
+        s.advance().ok();
+
+        let ev_headers = Event::Headers {
+            list: req,
+            has_body: true,
+        };
+
+        assert_eq!(s.server.poll(&mut s.pipe.server), Ok((0, ev_headers)));
+
+        // DATA frames don't consume the state buffer, so can be of any size.
         let mut d = [42; 128];
         let mut b = octets::OctetsMut::with_slice(&mut d);
 
@@ -3236,16 +3370,16 @@ mod tests {
         };
 
         assert_eq!(s.poll_server(), Ok((stream, ev_headers)));
+        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
 
         for _ in 0..total_data_frames {
-            assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
             assert_eq!(
                 s.recv_body_server(stream, &mut recv_buf),
                 Ok(bytes.len())
             );
         }
 
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
         assert_eq!(
             s.recv_body_server(stream, &mut recv_buf),
             Ok(bytes.len() - 2)
@@ -3283,11 +3417,11 @@ mod tests {
         s.handshake().unwrap();
 
         let req = vec![
-            Header::new(":method", "GET"),
-            Header::new(":scheme", "https"),
-            Header::new(":authority", "quic.tech"),
-            Header::new(":path", "/test"),
-            Header::new("aaaaaaa", "aaaaaaaa"),
+            Header::new(b":method", b"GET"),
+            Header::new(b":scheme", b"https"),
+            Header::new(b":authority", b"quic.tech"),
+            Header::new(b":path", b"/test"),
+            Header::new(b"aaaaaaa", b"aaaaaaaa"),
         ];
 
         let stream = s
@@ -3300,6 +3434,11 @@ mod tests {
         assert_eq!(stream, 0);
 
         assert_eq!(s.poll_server(), Err(Error::ExcessiveLoad));
+
+        assert_eq!(
+            s.pipe.server.local_error.as_ref().unwrap().error_code,
+            Error::to_wire(Error::ExcessiveLoad)
+        );
     }
 
     #[test]
@@ -3309,11 +3448,11 @@ mod tests {
         s.handshake().unwrap();
 
         let req = vec![
-            Header::new(":method", "GET"),
-            Header::new(":scheme", "https"),
-            Header::new(":authority", "quic.tech"),
-            Header::new(":path", "/test"),
-            Header::new("user-agent", "quiche-test"),
+            Header::new(b":method", b"GET"),
+            Header::new(b":scheme", b"https"),
+            Header::new(b":authority", b"quic.tech"),
+            Header::new(b":path", b"/test"),
+            Header::new(b"user-agent", b"quiche-test"),
         ];
 
         // We need to open all streams in the same flight, so we can't use the
@@ -3339,9 +3478,8 @@ mod tests {
     }
 
     #[test]
-    /// Tests that calling poll() after an error occured does nothing.
-    fn poll_after_error() {
-        // DATA frames don't consume the state buffer, so can be of any size.
+    /// Tests that sending DATA before HEADERS causes an error.
+    fn data_before_headers() {
         let mut s = Session::default().unwrap();
         s.handshake().unwrap();
 
@@ -3351,16 +3489,22 @@ mod tests {
         let frame_type = b.put_varint(frame::DATA_FRAME_TYPE_ID).unwrap();
         s.pipe.client.stream_send(0, frame_type, false).unwrap();
 
-        let frame_len = b.put_varint(1 << 24).unwrap();
+        let frame_len = b.put_varint(5).unwrap();
         s.pipe.client.stream_send(0, frame_len, false).unwrap();
 
-        s.pipe.client.stream_send(0, &d, false).unwrap();
+        s.pipe.client.stream_send(0, b"hello", false).unwrap();
 
         s.advance().ok();
 
-        assert_eq!(s.server.poll(&mut s.pipe.server), Ok((0, Event::Data)));
+        assert_eq!(
+            s.server.poll(&mut s.pipe.server),
+            Err(Error::FrameUnexpected)
+        );
+    }
 
-        // GREASE frames consume the state buffer, so need to be limited.
+    #[test]
+    /// Tests that calling poll() after an error occured does nothing.
+    fn poll_after_error() {
         let mut s = Session::default().unwrap();
         s.handshake().unwrap();
 
@@ -3409,10 +3553,10 @@ mod tests {
         s.handshake().unwrap();
 
         let req = vec![
-            Header::new(":method", "GET"),
-            Header::new(":scheme", "https"),
-            Header::new(":authority", "quic.tech"),
-            Header::new(":path", "/test"),
+            Header::new(b":method", b"GET"),
+            Header::new(b":scheme", b"https"),
+            Header::new(b":authority", b"quic.tech"),
+            Header::new(b":path", b"/test"),
         ];
 
         assert_eq!(s.client.send_request(&mut s.pipe.client, &req, true), Ok(0));
@@ -3430,6 +3574,61 @@ mod tests {
     }
 
     #[test]
+    /// Test handling of 0-length DATA writes with and without fin.
+    fn zero_length_data() {
+        let mut s = Session::default().unwrap();
+        s.handshake().unwrap();
+
+        let (stream, req) = s.send_request(false).unwrap();
+
+        assert_eq!(
+            s.client.send_body(&mut s.pipe.client, 0, b"", false),
+            Err(Error::Done)
+        );
+        assert_eq!(s.client.send_body(&mut s.pipe.client, 0, b"", true), Ok(0));
+
+        s.advance().ok();
+
+        let mut recv_buf = vec![0; 100];
+
+        let ev_headers = Event::Headers {
+            list: req,
+            has_body: true,
+        };
+
+        assert_eq!(s.poll_server(), Ok((stream, ev_headers)));
+
+        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+        assert_eq!(s.recv_body_server(stream, &mut recv_buf), Err(Error::Done));
+
+        assert_eq!(s.poll_server(), Ok((stream, Event::Finished)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        let resp = s.send_response(stream, false).unwrap();
+
+        assert_eq!(
+            s.server.send_body(&mut s.pipe.server, 0, b"", false),
+            Err(Error::Done)
+        );
+        assert_eq!(s.server.send_body(&mut s.pipe.server, 0, b"", true), Ok(0));
+
+        s.advance().ok();
+
+        let ev_headers = Event::Headers {
+            list: resp,
+            has_body: true,
+        };
+
+        assert_eq!(s.poll_client(), Ok((stream, ev_headers)));
+
+        assert_eq!(s.poll_client(), Ok((stream, Event::Data)));
+        assert_eq!(s.recv_body_client(stream, &mut recv_buf), Err(Error::Done));
+
+        assert_eq!(s.poll_client(), Ok((stream, Event::Finished)));
+        assert_eq!(s.poll_client(), Err(Error::Done));
+    }
+
+    #[test]
     /// Tests that blocked 0-length DATA writes are reported correctly.
     fn zero_length_data_blocked() {
         let mut config = crate::Config::new(crate::PROTOCOL_VERSION).unwrap();
@@ -3440,7 +3639,7 @@ mod tests {
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
         config.set_application_protos(b"\x02h3").unwrap();
-        config.set_initial_max_data(70);
+        config.set_initial_max_data(69);
         config.set_initial_max_stream_data_bidi_local(150);
         config.set_initial_max_stream_data_bidi_remote(150);
         config.set_initial_max_stream_data_uni(150);
@@ -3455,10 +3654,10 @@ mod tests {
         s.handshake().unwrap();
 
         let req = vec![
-            Header::new(":method", "GET"),
-            Header::new(":scheme", "https"),
-            Header::new(":authority", "quic.tech"),
-            Header::new(":path", "/test"),
+            Header::new(b":method", b"GET"),
+            Header::new(b":scheme", b"https"),
+            Header::new(b":authority", b"quic.tech"),
+            Header::new(b":path", b"/test"),
         ];
 
         assert_eq!(
@@ -3500,12 +3699,10 @@ mod tests {
         let h3_config = Config::new().unwrap();
 
         let mut s = Session::with_configs(&mut config, &h3_config).unwrap();
-        let mut buf = [42; 2000];
-
-        s.pipe.handshake(&mut buf).unwrap();
+        assert_eq!(s.pipe.handshake(), Ok(()));
 
         s.client.send_settings(&mut s.pipe.client).unwrap();
-        s.pipe.advance(&mut buf).unwrap();
+        assert_eq!(s.pipe.advance(), Ok(()));
 
         // Before processing SETTINGS (via poll), HTTP/3 DATAGRAMS are not
         // enabled.
@@ -3517,7 +3714,7 @@ mod tests {
 
         // Now detect things on the client
         s.server.send_settings(&mut s.pipe.server).unwrap();
-        s.pipe.advance(&mut buf).unwrap();
+        assert_eq!(s.pipe.advance(), Ok(()));
         assert!(!s.client.dgram_enabled_by_peer(&s.pipe.client));
         assert_eq!(s.client.poll(&mut s.pipe.client), Err(Error::Done));
         assert!(s.client.dgram_enabled_by_peer(&s.pipe.client));
@@ -3546,9 +3743,7 @@ mod tests {
         let h3_config = Config::new().unwrap();
 
         let mut s = Session::with_configs(&mut config, &h3_config).unwrap();
-        let mut buf = [42; 2000];
-
-        s.pipe.handshake(&mut buf).unwrap();
+        assert_eq!(s.pipe.handshake(), Ok(()));
 
         s.client.control_stream_id = Some(
             s.client
@@ -3570,9 +3765,80 @@ mod tests {
         s.send_frame_client(settings, s.client.control_stream_id.unwrap(), false)
             .unwrap();
 
-        s.pipe.advance(&mut buf).unwrap();
+        assert_eq!(s.pipe.advance(), Ok(()));
 
         assert_eq!(s.server.poll(&mut s.pipe.server), Err(Error::SettingsError));
+    }
+
+    #[test]
+    /// Tests that receiving SETTINGS with prohibited values generates an error.
+    fn settings_h2_prohibited() {
+        let mut config = crate::Config::new(crate::PROTOCOL_VERSION).unwrap();
+        config
+            .load_cert_chain_from_pem_file("examples/cert.crt")
+            .unwrap();
+        config
+            .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        config.set_application_protos(b"\x02h3").unwrap();
+        config.set_initial_max_data(70);
+        config.set_initial_max_stream_data_bidi_local(150);
+        config.set_initial_max_stream_data_bidi_remote(150);
+        config.set_initial_max_stream_data_uni(150);
+        config.set_initial_max_streams_bidi(100);
+        config.set_initial_max_streams_uni(5);
+        config.verify_peer(false);
+
+        let h3_config = Config::new().unwrap();
+
+        let mut s = Session::with_configs(&mut config, &h3_config).unwrap();
+        assert_eq!(s.pipe.handshake(), Ok(()));
+
+        s.client.control_stream_id = Some(
+            s.client
+                .open_uni_stream(
+                    &mut s.pipe.client,
+                    stream::HTTP3_CONTROL_STREAM_TYPE_ID,
+                )
+                .unwrap(),
+        );
+
+        s.server.control_stream_id = Some(
+            s.server
+                .open_uni_stream(
+                    &mut s.pipe.server,
+                    stream::HTTP3_CONTROL_STREAM_TYPE_ID,
+                )
+                .unwrap(),
+        );
+
+        let frame_payload_len = 2u64;
+        let settings = [
+            frame::SETTINGS_FRAME_TYPE_ID as u8,
+            frame_payload_len as u8,
+            0x2, // 0x2 is a reserved setting type
+            1,
+        ];
+
+        s.send_arbitrary_stream_data_client(
+            &settings,
+            s.client.control_stream_id.unwrap(),
+            false,
+        )
+        .unwrap();
+
+        s.send_arbitrary_stream_data_server(
+            &settings,
+            s.server.control_stream_id.unwrap(),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(s.pipe.advance(), Ok(()));
+
+        assert_eq!(s.server.poll(&mut s.pipe.server), Err(Error::SettingsError));
+
+        assert_eq!(s.client.poll(&mut s.pipe.client), Err(Error::SettingsError));
     }
 
     #[test]
@@ -3612,10 +3878,12 @@ mod tests {
 
         assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(result));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(result));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(result));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+        assert_eq!(s.recv_dgram_server(&mut buf), Err(Error::Done));
         assert_eq!(s.poll_server(), Err(Error::Done));
 
         s.send_dgram_server(0).unwrap();
@@ -3623,11 +3891,14 @@ mod tests {
         s.send_dgram_server(0).unwrap();
 
         assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
         assert_eq!(s.recv_dgram_client(&mut buf), Ok(result));
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_client(), Err(Error::Done));
         assert_eq!(s.recv_dgram_client(&mut buf), Ok(result));
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_client(), Err(Error::Done));
         assert_eq!(s.recv_dgram_client(&mut buf), Ok(result));
+        assert_eq!(s.poll_client(), Err(Error::Done));
+        assert_eq!(s.recv_dgram_client(&mut buf), Err(Error::Done));
         assert_eq!(s.poll_client(), Err(Error::Done));
     }
 
@@ -3651,10 +3922,12 @@ mod tests {
         // Only 3 independent DATAGRAM events will fire.
         assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(result));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(result));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(result));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+        assert_eq!(s.recv_dgram_server(&mut buf), Err(Error::Done));
         assert_eq!(s.poll_server(), Err(Error::Done));
     }
 
@@ -3680,8 +3953,6 @@ mod tests {
         config.enable_dgram(true, 100, 100);
 
         let mut h3_config = Config::new().unwrap();
-        h3_config.set_dgram_poll_threshold(5);
-        h3_config.set_stream_poll_threshold(5);
         let mut s = Session::with_configs(&mut config, &mut h3_config).unwrap();
         s.handshake().unwrap();
 
@@ -3699,42 +3970,11 @@ mod tests {
 
         // Now let's test the poll counts and yielding.
         assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
 
         assert_eq!(s.poll_server(), Ok((stream, ev_headers)));
         assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
 
-        // Second cycle.
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-
-        // Third cycle.
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
     }
 
     #[test]
@@ -3761,8 +4001,6 @@ mod tests {
         config.enable_dgram(true, 100, 100);
 
         let mut h3_config = Config::new().unwrap();
-        h3_config.set_dgram_poll_threshold(5);
-        h3_config.set_stream_poll_threshold(5);
         let mut s = Session::with_configs(&mut config, &mut h3_config).unwrap();
         s.handshake().unwrap();
 
@@ -3785,21 +4023,16 @@ mod tests {
 
         // Now let's test the poll counts and yielding.
         assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
 
         assert_eq!(s.poll_server(), Ok((stream, ev_headers)));
         assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
 
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(result));
 
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
         assert_eq!(s.recv_body_server(stream, &mut recv_buf), Ok(body.len()));
         assert_eq!(s.poll_server(), Ok((stream, Event::Finished)));
         assert_eq!(s.poll_server(), Err(Error::Done));
@@ -3820,21 +4053,16 @@ mod tests {
 
         // Now let's test the poll counts and yielding.
         assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
 
         assert_eq!(s.poll_client(), Ok((stream, ev_headers)));
         assert_eq!(s.poll_client(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_client(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_client(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_client(), Ok((stream, Event::Data)));
 
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_client(), Err(Error::Done));
+
         assert_eq!(s.recv_dgram_client(&mut buf), Ok(result));
 
-        assert_eq!(s.poll_client(), Ok((stream, Event::Data)));
+        assert_eq!(s.poll_client(), Err(Error::Done));
+
         assert_eq!(s.recv_body_client(stream, &mut recv_buf), Ok(body.len()));
 
         assert_eq!(s.poll_client(), Ok((stream, Event::Finished)));
@@ -3865,8 +4093,6 @@ mod tests {
         config.enable_dgram(true, 100, 100);
 
         let mut h3_config = Config::new().unwrap();
-        h3_config.set_dgram_poll_threshold(5);
-        h3_config.set_stream_poll_threshold(5);
         let mut s = Session::with_configs(&mut config, &mut h3_config).unwrap();
         s.handshake().unwrap();
 
@@ -3899,45 +4125,38 @@ mod tests {
 
         // Now let's test the poll counts and yielding.
         assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
 
         assert_eq!(s.poll_server(), Ok((stream, ev_headers)));
         assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+
+        assert_eq!(s.poll_server(), Err(Error::Done));
 
         // Second cycle, start to read
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_0_result));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_0_result));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_0_result));
+        assert_eq!(s.poll_server(), Err(Error::Done));
 
-        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
         assert_eq!(s.recv_body_server(stream, &mut recv_buf), Ok(body.len()));
         assert_eq!(s.poll_server(), Ok((stream, Event::Finished)));
 
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
         // Third cycle.
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_0_result));
-        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_0_result));
-        assert_eq!(s.poll_server(), Ok((2, Event::Datagram)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_2_result));
-        assert_eq!(s.poll_server(), Ok((2, Event::Datagram)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_2_result));
-        assert_eq!(s.poll_server(), Ok((2, Event::Datagram)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_2_result));
-        assert_eq!(s.poll_server(), Ok((2, Event::Datagram)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_2_result));
-        assert_eq!(s.poll_server(), Ok((2, Event::Datagram)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
         assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_2_result));
         assert_eq!(s.poll_server(), Err(Error::Done));
 
@@ -3965,51 +4184,505 @@ mod tests {
         s.send_dgram_server(2).unwrap();
 
         assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
 
         assert_eq!(s.poll_client(), Ok((stream, ev_headers)));
         assert_eq!(s.poll_client(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_client(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_client(), Ok((stream, Event::Data)));
-        assert_eq!(s.poll_client(), Ok((stream, Event::Data)));
+
+        assert_eq!(s.poll_client(), Err(Error::Done));
 
         // Second cycle, start to read
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
         assert_eq!(s.recv_dgram_client(&mut buf), Ok(flow_0_result));
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_client(), Err(Error::Done));
         assert_eq!(s.recv_dgram_client(&mut buf), Ok(flow_0_result));
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_client(), Err(Error::Done));
         assert_eq!(s.recv_dgram_client(&mut buf), Ok(flow_0_result));
+        assert_eq!(s.poll_client(), Err(Error::Done));
 
-        assert_eq!(s.poll_client(), Ok((stream, Event::Data)));
         assert_eq!(s.recv_body_client(stream, &mut recv_buf), Ok(body.len()));
-
         assert_eq!(s.poll_client(), Ok((stream, Event::Finished)));
 
+        assert_eq!(s.poll_client(), Err(Error::Done));
+
         // Third cycle.
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
         assert_eq!(s.recv_dgram_client(&mut buf), Ok(flow_0_result));
-        assert_eq!(s.poll_client(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_client(), Err(Error::Done));
         assert_eq!(s.recv_dgram_client(&mut buf), Ok(flow_0_result));
-        assert_eq!(s.poll_client(), Ok((2, Event::Datagram)));
+        assert_eq!(s.poll_client(), Err(Error::Done));
         assert_eq!(s.recv_dgram_client(&mut buf), Ok(flow_2_result));
-        assert_eq!(s.poll_client(), Ok((2, Event::Datagram)));
+        assert_eq!(s.poll_client(), Err(Error::Done));
         assert_eq!(s.recv_dgram_client(&mut buf), Ok(flow_2_result));
-        assert_eq!(s.poll_client(), Ok((2, Event::Datagram)));
+        assert_eq!(s.poll_client(), Err(Error::Done));
         assert_eq!(s.recv_dgram_client(&mut buf), Ok(flow_2_result));
-        assert_eq!(s.poll_client(), Ok((2, Event::Datagram)));
+        assert_eq!(s.poll_client(), Err(Error::Done));
         assert_eq!(s.recv_dgram_client(&mut buf), Ok(flow_2_result));
-        assert_eq!(s.poll_client(), Ok((2, Event::Datagram)));
+        assert_eq!(s.poll_client(), Err(Error::Done));
         assert_eq!(s.recv_dgram_client(&mut buf), Ok(flow_2_result));
+        assert_eq!(s.poll_client(), Err(Error::Done));
+    }
+
+    #[test]
+    /// Tests that the Finished event is not issued for streams of unknown type
+    /// (e.g. GREASE).
+    fn finished_is_for_requests() {
+        let mut s = Session::default().unwrap();
+        s.handshake().unwrap();
+
+        assert_eq!(s.poll_client(), Err(Error::Done));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        assert_eq!(s.client.open_grease_stream(&mut s.pipe.client), Ok(()));
+        assert_eq!(s.pipe.advance(), Ok(()));
+
+        assert_eq!(s.poll_client(), Err(Error::Done));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+    }
+
+    #[test]
+    /// Tests that streams are marked as finished only once.
+    fn finished_once() {
+        let mut s = Session::default().unwrap();
+        s.handshake().unwrap();
+
+        let (stream, req) = s.send_request(false).unwrap();
+        let body = s.send_body_client(stream, true).unwrap();
+
+        let mut recv_buf = vec![0; body.len()];
+
+        let ev_headers = Event::Headers {
+            list: req,
+            has_body: true,
+        };
+
+        assert_eq!(s.poll_server(), Ok((stream, ev_headers)));
+        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+
+        assert_eq!(s.recv_body_server(stream, &mut recv_buf), Ok(body.len()));
+        assert_eq!(s.poll_server(), Ok((stream, Event::Finished)));
+
+        assert_eq!(s.recv_body_server(stream, &mut recv_buf), Err(Error::Done));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+    }
+
+    #[test]
+    /// Tests that the Data event is properly re-armed.
+    fn data_event_rearm() {
+        let bytes = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+        let mut s = Session::default().unwrap();
+        s.handshake().unwrap();
+
+        let (stream, req) = s.send_request(false).unwrap();
+
+        let mut recv_buf = vec![0; bytes.len()];
+
+        let ev_headers = Event::Headers {
+            list: req,
+            has_body: true,
+        };
+
+        // Manually send an incomplete DATA frame (i.e. the frame size is longer
+        // than the actual data sent).
+        {
+            let mut d = [42; 10];
+            let mut b = octets::OctetsMut::with_slice(&mut d);
+
+            b.put_varint(frame::DATA_FRAME_TYPE_ID).unwrap();
+            b.put_varint(bytes.len() as u64).unwrap();
+            let off = b.off();
+            s.pipe.client.stream_send(stream, &d[..off], false).unwrap();
+
+            assert_eq!(
+                s.pipe.client.stream_send(stream, &bytes[..5], false),
+                Ok(5)
+            );
+
+            s.advance().ok();
+        }
+
+        assert_eq!(s.poll_server(), Ok((stream, ev_headers)));
+        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        // Read the available body data.
+        assert_eq!(s.recv_body_server(stream, &mut recv_buf), Ok(5));
+
+        // Send the remaining DATA payload.
+        assert_eq!(s.pipe.client.stream_send(stream, &bytes[5..], false), Ok(5));
+        s.advance().ok();
+
+        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        // Read the rest of the body data.
+        assert_eq!(s.recv_body_server(stream, &mut recv_buf), Ok(5));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        // Send more data.
+        let body = s.send_body_client(stream, false).unwrap();
+
+        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        assert_eq!(s.recv_body_server(stream, &mut recv_buf), Ok(body.len()));
+
+        // Send more data, then HEADERS, then more data.
+        let body = s.send_body_client(stream, false).unwrap();
+
+        let trailers = vec![Header::new(b"hello", b"world")];
+
+        s.client
+            .send_headers(&mut s.pipe.client, stream, &trailers, false)
+            .unwrap();
+
+        let ev_trailers = Event::Headers {
+            list: trailers,
+            has_body: true,
+        };
+
+        s.advance().ok();
+
+        s.send_body_client(stream, false).unwrap();
+
+        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+        assert_eq!(s.recv_body_server(stream, &mut recv_buf), Ok(body.len()));
+
+        assert_eq!(s.poll_server(), Ok((stream, ev_trailers)));
+
+        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+        assert_eq!(s.recv_body_server(stream, &mut recv_buf), Ok(body.len()));
+
+        let (stream, req) = s.send_request(false).unwrap();
+
+        let ev_headers = Event::Headers {
+            list: req,
+            has_body: true,
+        };
+
+        // Manually send an incomplete DATA frame (i.e. only the header is sent).
+        {
+            let mut d = [42; 10];
+            let mut b = octets::OctetsMut::with_slice(&mut d);
+
+            b.put_varint(frame::DATA_FRAME_TYPE_ID).unwrap();
+            b.put_varint(bytes.len() as u64).unwrap();
+            let off = b.off();
+            s.pipe.client.stream_send(stream, &d[..off], false).unwrap();
+
+            s.advance().ok();
+        }
+
+        assert_eq!(s.poll_server(), Ok((stream, ev_headers)));
+        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        assert_eq!(s.recv_body_server(stream, &mut recv_buf), Err(Error::Done));
+
+        assert_eq!(s.pipe.client.stream_send(stream, &bytes[..5], false), Ok(5));
+
+        s.advance().ok();
+
+        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        assert_eq!(s.recv_body_server(stream, &mut recv_buf), Ok(5));
+
+        assert_eq!(s.pipe.client.stream_send(stream, &bytes[5..], false), Ok(5));
+        s.advance().ok();
+
+        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        assert_eq!(s.recv_body_server(stream, &mut recv_buf), Ok(5));
+
+        // Buffer multiple data frames.
+        let body = s.send_body_client(stream, false).unwrap();
+        s.send_body_client(stream, false).unwrap();
+        s.send_body_client(stream, false).unwrap();
+
+        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        {
+            let mut d = [42; 10];
+            let mut b = octets::OctetsMut::with_slice(&mut d);
+
+            b.put_varint(frame::DATA_FRAME_TYPE_ID).unwrap();
+            b.put_varint(0).unwrap();
+            let off = b.off();
+            s.pipe.client.stream_send(stream, &d[..off], true).unwrap();
+
+            s.advance().ok();
+        }
+
+        let mut recv_buf = vec![0; bytes.len() * 3];
+
+        assert_eq!(
+            s.recv_body_server(stream, &mut recv_buf),
+            Ok(body.len() * 3)
+        );
+    }
+
+    #[test]
+    /// Tests that the Datagram event is properly re-armed.
+    fn dgram_event_rearm() {
+        let mut buf = [0; 65535];
+
+        let mut config = crate::Config::new(crate::PROTOCOL_VERSION).unwrap();
+        config
+            .load_cert_chain_from_pem_file("examples/cert.crt")
+            .unwrap();
+        config
+            .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        config.set_application_protos(b"\x02h3").unwrap();
+        config.set_initial_max_data(1500);
+        config.set_initial_max_stream_data_bidi_local(150);
+        config.set_initial_max_stream_data_bidi_remote(150);
+        config.set_initial_max_stream_data_uni(150);
+        config.set_initial_max_streams_bidi(100);
+        config.set_initial_max_streams_uni(5);
+        config.verify_peer(false);
+        config.enable_dgram(true, 100, 100);
+
+        let mut h3_config = Config::new().unwrap();
+        let mut s = Session::with_configs(&mut config, &mut h3_config).unwrap();
+        s.handshake().unwrap();
+
+        // 10 bytes on flow ID 0 and 2.
+        let flow_0_result = (11, 0, 1);
+        let flow_2_result = (11, 2, 1);
+
+        // Send requests followed by DATAGRAMs on client side.
+        let (stream, req) = s.send_request(false).unwrap();
+
+        let body = s.send_body_client(stream, true).unwrap();
+
+        let mut recv_buf = vec![0; body.len()];
+
+        let ev_headers = Event::Headers {
+            list: req,
+            has_body: true,
+        };
+
+        s.send_dgram_client(0).unwrap();
+        s.send_dgram_client(0).unwrap();
+        s.send_dgram_client(2).unwrap();
+        s.send_dgram_client(2).unwrap();
+
+        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
+
+        assert_eq!(s.poll_server(), Ok((stream, ev_headers)));
+        assert_eq!(s.poll_server(), Ok((stream, Event::Data)));
+
+        assert_eq!(s.poll_server(), Err(Error::Done));
+        assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_0_result));
+
+        assert_eq!(s.poll_server(), Err(Error::Done));
+        assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_0_result));
+
+        assert_eq!(s.poll_server(), Err(Error::Done));
+        assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_2_result));
+
+        assert_eq!(s.poll_server(), Err(Error::Done));
+        assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_2_result));
+
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        s.send_dgram_client(0).unwrap();
+        s.send_dgram_client(2).unwrap();
+
+        assert_eq!(s.poll_server(), Ok((0, Event::Datagram)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_0_result));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        assert_eq!(s.recv_dgram_server(&mut buf), Ok(flow_2_result));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        assert_eq!(s.recv_body_server(stream, &mut recv_buf), Ok(body.len()));
+        assert_eq!(s.poll_server(), Ok((stream, Event::Finished)));
+    }
+
+    #[test]
+    fn reset_stream() {
+        let mut buf = [0; 65535];
+
+        let mut s = Session::default().unwrap();
+        s.handshake().unwrap();
+
+        // Client sends request.
+        let (stream, req) = s.send_request(false).unwrap();
+
+        let ev_headers = Event::Headers {
+            list: req,
+            has_body: true,
+        };
+
+        // Server sends response and closes stream.
+        assert_eq!(s.poll_server(), Ok((stream, ev_headers)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        let resp = s.send_response(stream, true).unwrap();
+
+        let ev_headers = Event::Headers {
+            list: resp,
+            has_body: false,
+        };
+
+        assert_eq!(s.poll_client(), Ok((stream, ev_headers)));
+        assert_eq!(s.poll_client(), Ok((stream, Event::Finished)));
+        assert_eq!(s.poll_client(), Err(Error::Done));
+
+        // Client sends RESET_STREAM, closing stream.
+        let frames = [crate::frame::Frame::ResetStream {
+            stream_id: stream,
+            error_code: 42,
+            final_size: 68,
+        }];
+
+        let pkt_type = crate::packet::Type::Short;
+        assert_eq!(
+            s.pipe.send_pkt_to_server(pkt_type, &frames, &mut buf),
+            Ok(39)
+        );
+
+        // Server issues Reset event for the stream.
+        assert_eq!(s.poll_server(), Ok((stream, Event::Reset(42))));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        // Sending RESET_STREAM again shouldn't trigger another Reset event.
+        assert_eq!(
+            s.pipe.send_pkt_to_server(pkt_type, &frames, &mut buf),
+            Ok(39)
+        );
+
+        assert_eq!(s.poll_server(), Err(Error::Done));
+    }
+
+    #[test]
+    fn reset_finished_at_server() {
+        let mut s = Session::default().unwrap();
+        s.handshake().unwrap();
+
+        // Client sends HEADERS and doesn't fin
+        let (stream, _req) = s.send_request(false).unwrap();
+
+        // ..then Client sends RESET_STREAM
+        assert_eq!(
+            s.pipe.client.stream_shutdown(0, crate::Shutdown::Write, 0),
+            Ok(())
+        );
+
+        assert_eq!(s.pipe.advance(), Ok(()));
+
+        // Server receives just a reset
+        assert_eq!(s.poll_server(), Ok((stream, Event::Reset(0))));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        // Client sends HEADERS and fin
+        let (stream, req) = s.send_request(true).unwrap();
+
+        // ..then Client sends RESET_STREAM
+        assert_eq!(
+            s.pipe.client.stream_shutdown(4, crate::Shutdown::Write, 0),
+            Ok(())
+        );
+
+        let ev_headers = Event::Headers {
+            list: req,
+            has_body: false,
+        };
+
+        // Server receives headers and fin.
+        assert_eq!(s.poll_server(), Ok((stream, ev_headers)));
+        assert_eq!(s.poll_server(), Ok((stream, Event::Finished)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+    }
+
+    #[test]
+    fn reset_finished_at_client() {
+        let mut buf = [0; 65535];
+        let mut s = Session::default().unwrap();
+        s.handshake().unwrap();
+
+        // Client sends HEADERS and doesn't fin
+        let (stream, req) = s.send_request(false).unwrap();
+
+        let ev_headers = Event::Headers {
+            list: req,
+            has_body: true,
+        };
+
+        // Server receives headers.
+        assert_eq!(s.poll_server(), Ok((stream, ev_headers)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        // Server sends response and doesn't fin
+        s.send_response(stream, false).unwrap();
+
+        assert_eq!(s.pipe.advance(), Ok(()));
+
+        // .. then Server sends RESET_STREAM
+        assert_eq!(
+            s.pipe
+                .server
+                .stream_shutdown(stream, crate::Shutdown::Write, 0),
+            Ok(())
+        );
+
+        assert_eq!(s.pipe.advance(), Ok(()));
+
+        // Client receives Reset only
+        assert_eq!(s.poll_client(), Ok((stream, Event::Reset(0))));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        // Client sends headers and fin.
+        let (stream, req) = s.send_request(true).unwrap();
+
+        let ev_headers = Event::Headers {
+            list: req,
+            has_body: false,
+        };
+
+        // Server receives headers and fin.
+        assert_eq!(s.poll_server(), Ok((stream, ev_headers)));
+        assert_eq!(s.poll_server(), Ok((stream, Event::Finished)));
+        assert_eq!(s.poll_server(), Err(Error::Done));
+
+        // Server sends response and fin
+        let resp = s.send_response(stream, true).unwrap();
+
+        assert_eq!(s.pipe.advance(), Ok(()));
+
+        // ..then Server sends RESET_STREAM
+        let frames = [crate::frame::Frame::ResetStream {
+            stream_id: stream,
+            error_code: 42,
+            final_size: 68,
+        }];
+
+        let pkt_type = crate::packet::Type::Short;
+        assert_eq!(
+            s.pipe.send_pkt_to_server(pkt_type, &frames, &mut buf),
+            Ok(39)
+        );
+
+        assert_eq!(s.pipe.advance(), Ok(()));
+
+        let ev_headers = Event::Headers {
+            list: resp,
+            has_body: false,
+        };
+
+        // Client receives headers and fin.
+        assert_eq!(s.poll_client(), Ok((stream, ev_headers)));
+        assert_eq!(s.poll_client(), Ok((stream, Event::Finished)));
         assert_eq!(s.poll_client(), Err(Error::Done));
     }
 }
 
+#[cfg(feature = "ffi")]
 mod ffi;
 mod frame;
 #[doc(hidden)]

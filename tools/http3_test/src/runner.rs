@@ -26,10 +26,13 @@
 
 use ring::rand::*;
 
+use crate::Http3TestError;
+
 pub fn run(
     test: &mut crate::Http3Test, peer_addr: std::net::SocketAddr,
-    verify_peer: bool, idle_timeout: u64, max_data: u64,
-) {
+    verify_peer: bool, idle_timeout: u64, max_data: u64, early_data: bool,
+    session_file: Option<String>,
+) -> Result<(), Http3TestError> {
     const MAX_DATAGRAM_SIZE: usize = 1350;
 
     let mut buf = [0; 65535];
@@ -70,7 +73,6 @@ pub fn run(
     // Create the UDP socket backing the QUIC connection, and register it with
     // the event loop.
     let socket = std::net::UdpSocket::bind(bind_addr).unwrap();
-    socket.connect(peer_addr).unwrap();
 
     let socket = mio::net::UdpSocket::from_socket(socket).unwrap();
     poll.register(
@@ -100,6 +102,11 @@ pub fn run(
     config.set_initial_max_streams_uni(100);
     config.set_disable_active_migration(true);
 
+    if early_data {
+        config.enable_early_data();
+        debug!("early data enabled");
+    }
+
     let mut http3_conn = None;
 
     if std::env::var_os("SSLKEYLOGFILE").is_some() {
@@ -110,23 +117,29 @@ pub fn run(
     let mut scid = [0; quiche::MAX_CONN_ID_LEN];
     SystemRandom::new().fill(&mut scid[..]).unwrap();
 
+    let scid = quiche::ConnectionId::from_ref(&scid);
+
     // Create a QUIC connection and initiate handshake.
     let url = &test.endpoint();
-    let mut conn = quiche::connect(url.domain(), &scid, &mut config).unwrap();
 
-    let write = match conn.send(&mut out) {
-        Ok(v) => v,
+    let mut conn =
+        quiche::connect(url.domain(), &scid, peer_addr, &mut config).unwrap();
 
-        Err(e) => panic!("initial send failed: {:?}", e),
-    };
+    if let Some(session_file) = &session_file {
+        if let Ok(session) = std::fs::read(session_file) {
+            conn.set_session(&session).ok();
+        }
+    }
 
-    while let Err(e) = socket.send(&out[..write]) {
+    let (write, send_info) = conn.send(&mut out).expect("initial send failed");
+
+    while let Err(e) = socket.send_to(&out[..write], &send_info.to) {
         if e.kind() == std::io::ErrorKind::WouldBlock {
             debug!("send() would block");
             continue;
         }
 
-        panic!("send() failed: {:?}", e);
+        return Err(Http3TestError::Other(format!("send() failed: {:?}", e)));
     }
 
     debug!("written {}", write);
@@ -134,7 +147,9 @@ pub fn run(
     let req_start = std::time::Instant::now();
 
     loop {
-        poll.poll(&mut events, conn.timeout()).unwrap();
+        if !conn.is_in_early_data() || http3_conn.is_some() {
+            poll.poll(&mut events, conn.timeout()).unwrap();
+        }
 
         // Read incoming UDP packets from the socket and feed them to quiche,
         // until there are no more packets to read.
@@ -150,7 +165,7 @@ pub fn run(
                 break 'read;
             }
 
-            let len = match socket.recv(&mut buf) {
+            let (len, from) = match socket.recv_from(&mut buf) {
                 Ok(v) => v,
 
                 Err(e) => {
@@ -161,14 +176,19 @@ pub fn run(
                         break 'read;
                     }
 
-                    panic!("recv() failed: {:?}", e);
+                    return Err(Http3TestError::Other(format!(
+                        "recv() failed: {:?}",
+                        e
+                    )));
                 },
             };
 
             debug!("got {} bytes", len);
 
+            let recv_info = quiche::RecvInfo { from };
+
             // Process potentially coalesced packets.
-            let read = match conn.recv(&mut buf[..len]) {
+            let read = match conn.recv(&mut buf[..len], recv_info) {
                 Ok(v) => v,
 
                 Err(quiche::Error::Done) => {
@@ -188,9 +208,22 @@ pub fn run(
         if conn.is_closed() {
             info!("connection closed, {:?}", conn.stats());
 
+            if !conn.is_established() {
+                error!("connection timed out after {:?}", req_start.elapsed(),);
+
+                return Err(Http3TestError::HandshakeFail);
+            }
+
             if reqs_complete != reqs_count {
-                panic!("Client timed out after {:?} and only completed {}/{} requests",
+                error!("Client timed out after {:?} and only completed {}/{} requests",
                 req_start.elapsed(), reqs_complete, reqs_count);
+                return Err(Http3TestError::HttpFail);
+            }
+
+            if let Some(session_file) = session_file {
+                if let Some(session) = conn.session() {
+                    std::fs::write(session_file, &session).ok();
+                }
             }
 
             break;
@@ -198,7 +231,9 @@ pub fn run(
 
         // Create a new HTTP/3 connection and end an HTTP request as soon as
         // the QUIC connection is established.
-        if conn.is_established() && http3_conn.is_none() {
+        if (conn.is_established() || conn.is_in_early_data()) &&
+            http3_conn.is_none()
+        {
             let h3_config = quiche::h3::Config::new().unwrap();
 
             let mut h3_conn =
@@ -207,7 +242,18 @@ pub fn run(
 
             reqs_count = test.requests_count();
 
-            test.send_requests(&mut conn, &mut h3_conn).unwrap();
+            match test.send_requests(&mut conn, &mut h3_conn) {
+                Ok(_) => (),
+
+                Err(quiche::h3::Error::Done) => (),
+
+                Err(e) => {
+                    return Err(Http3TestError::Other(format!(
+                        "error sending: {:?}",
+                        e
+                    )));
+                },
+            };
 
             http3_conn = Some(h3_conn);
         }
@@ -258,7 +304,12 @@ pub fn run(
                                 // Already closed.
                                 Ok(_) | Err(quiche::Error::Done) => (),
 
-                                Err(e) => panic!("error closing conn: {:?}", e),
+                                Err(e) => {
+                                    return Err(Http3TestError::Other(format!(
+                                        "error closing conn: {:?}",
+                                        e
+                                    )));
+                                },
                             }
 
                             test.assert();
@@ -269,8 +320,19 @@ pub fn run(
                         match test.send_requests(&mut conn, http3_conn) {
                             Ok(_) => (),
                             Err(quiche::h3::Error::Done) => (),
-                            Err(e) => panic!("error sending request {:?}", e),
+                            Err(e) => {
+                                return Err(Http3TestError::Other(format!(
+                                    "error sending request: {:?}",
+                                    e
+                                )));
+                            },
                         }
+                    },
+
+                    Ok((_stream_id, quiche::h3::Event::Reset(e))) => {
+                        error!("request was reset by peer with {}", e);
+
+                        break;
                     },
 
                     Ok((_flow_id, quiche::h3::Event::Datagram)) => (),
@@ -293,7 +355,7 @@ pub fn run(
         // Generate outgoing QUIC packets and send them on the UDP socket, until
         // quiche reports that there are no more packets to be sent.
         loop {
-            let write = match conn.send(&mut out) {
+            let (write, send_info) = match conn.send(&mut out) {
                 Ok(v) => v,
 
                 Err(quiche::Error::Done) => {
@@ -308,13 +370,16 @@ pub fn run(
                 },
             };
 
-            if let Err(e) = socket.send(&out[..write]) {
+            if let Err(e) = socket.send_to(&out[..write], &send_info.to) {
                 if e.kind() == std::io::ErrorKind::WouldBlock {
                     debug!("send() would block");
                     break;
                 }
 
-                panic!("send() failed: {:?}", e);
+                return Err(Http3TestError::Other(format!(
+                    "send() failed: {:?}",
+                    e
+                )));
             }
 
             debug!("written {}", write);
@@ -324,11 +389,20 @@ pub fn run(
             info!("connection closed, {:?}", conn.stats());
 
             if reqs_complete != reqs_count {
-                panic!("Client timed out after {:?} and only completed {}/{} requests",
+                error!("Client timed out after {:?} and only completed {}/{} requests",
                 req_start.elapsed(), reqs_complete, reqs_count);
+                return Err(Http3TestError::HttpFail);
+            }
+
+            if let Some(session_file) = session_file {
+                if let Some(session) = conn.session() {
+                    std::fs::write(session_file, &session).ok();
+                }
             }
 
             break;
         }
     }
+
+    Ok(())
 }
